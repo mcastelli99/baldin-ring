@@ -1723,23 +1723,33 @@ function updateStage(dt) {
     cameraX += (targetCam - cameraX) * 0.10;
     cameraX = Math.max(0, Math.min(LEVEL_END - GW, cameraX));
 
-    // Wake dormant entities when camera approaches (within 1 screen width)
+    // Wake dormant entities when camera approaches (within 1 screen width).
+    // While a miniboss is locking the arena, NO other entities wake (clean fight).
     const wakeRange = GW;
     for (const e of enemies) {
         if (e.dormant && (e.x - player.fighter.x) < wakeRange) {
+            // Lock is active - only allow waking THIS miniboss (the gating one). Pause all other enemies.
+            if (stage.lockedMiniboss && !e.miniboss) continue;
             e.dormant = false;
             // Mini-boss dramatic entry banner + LOCK the player in the arena until defeated
             if (e.miniboss && e.title) {
+                // Force miniboss to spawn on the RIGHT side of the player so DJ booth on the left
+                // never blocks the view. If their preset X is too close or behind, snap them forward.
+                const minDistRight = 320;
+                if (e.x < player.fighter.x + minDistRight) {
+                    e.x = player.fighter.x + minDistRight;
+                }
                 stage.bannerText = e.title;
                 stage.bannerSubtitle = e.subtitle || '';
                 stage.bannerTimer = 2.4;
                 chatPush('sys', `!! ${e.title} APPEARS !!`);
                 addShake(10, 0.5);
                 sfx('parry');
-                // Lock the arena - player cant proceed past the miniboss until defeated
                 if (!stage.lockedAt) {
-                    stage.lockedAt = e.x + 220;
+                    // Wall just LEFT of miniboss, so player can't walk past and end up with miniboss behind them
+                    stage.lockedAt = e.x - 70;
                     stage.lockedMiniboss = e;
+                    stage.lockMinibossMinX = player.fighter.x + 100;  // miniboss can't retreat past player
                 }
             }
         }
@@ -1753,8 +1763,10 @@ function updateStage(dt) {
     }
     for (const o of obstacles) {
         if (o.dormant && (o.x - player.fighter.x) < wakeRange) {
+            // Same lockdown for obstacles - no new tombstones/billboards spawn during miniboss fight
+            if (stage.lockedMiniboss) continue;
             o.dormant = false;
-            o.spawned = false;     // trigger spawn animation
+            o.spawned = false;
             o.spawnDelay = 0;
         }
     }
@@ -1952,9 +1964,14 @@ function updateEnemies(dt) {
         e.x += e.vx * dt;
         // Boundary
         if (e.x < 50) e.x = 50;
-        if (e.x > GW - 50) e.x = GW - 50;
+        if (e.x > LEVEL_END - 50) e.x = LEVEL_END - 50;
+        // Active miniboss is locked to STAY right of the player (so view is never obstructed by DJ booth)
+        if (e === stage.lockedMiniboss) {
+            const minX = player.fighter.x + 140;
+            if (e.x < minX) { e.x = minX; e.vx = Math.max(0, e.vx); }
+        }
     }
-    enemies = enemies.filter(e => e.alive || e.hp > 0);  // already-dead ones drop off
+    enemies = enemies.filter(e => e.alive || e.hp > 0);
 }
 
 function updateObstacles(dt) {
