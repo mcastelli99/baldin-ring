@@ -234,11 +234,11 @@ const ENEMY_TYPES = {
     halo_grunt: {
         spriteKey: 'halo_grunt_enemy',
         w: 56, h: 110, drawScale: 1.5, spriteDefaultFacing: 1,
-        hp: 6,                  // dies in 1-2 light hits
-        damage: 7,
+        hp: 4,                  // 1-shot territory for any light attack
+        damage: 6,
         speed: 130,
         attackRange: 70,
-        attackCooldown: 1.4,
+        attackCooldown: 1.5,
         ai: 'melee',
         runeReward: 5
     },
@@ -256,13 +256,13 @@ const ENEMY_TYPES = {
     spartan: {
         spriteKey: 'spartan_enemy',
         w: 80, h: 160, drawScale: 1.45, spriteDefaultFacing: 1,
-        hp: 14,                 // tanky, 3-4 hits
-        damage: 7,
+        hp: 22,                 // 4 light hits to drop
+        damage: 3,              // per bullet (3-burst = 9 max damage instead of 21)
         speed: 90,
-        attackRange: 0,         // rifle burst (ranged)
-        attackCooldown: 1.8,
+        attackRange: 0,
+        attackCooldown: 2.6,    // longer breathing room between bursts
         ai: 'spartan_rifle',
-        runeReward: 12,
+        runeReward: 14,
         miniboss: true,
         title: 'SPARTAN',
         subtitle: 'Battle Rifle'
@@ -564,13 +564,11 @@ function handleInputDown(code) {
     }
     if (gameState === STATE.FIGHT || gameState === STATE.STAGE) {
         const f = player.fighter;
-        // Snap-face the nearest opponent (or just face arrow direction in stage mode if no enemies)
         if (['ArrowLeft','ArrowRight','KeyA','KeyD'].includes(code)) {
             if (f.onGround && f.attackPhase !== 'active' && f.attackPhase !== 'startup') {
                 if (gameState === STATE.FIGHT && boss.fighter) {
                     f.facing = boss.fighter.x > f.x ? 1 : -1;
                 } else {
-                    // Stage: face the direction of the key pressed (always)
                     f.facing = (code === 'ArrowRight' || code === 'KeyD') ? 1 : -1;
                 }
             }
@@ -580,6 +578,7 @@ function handleInputDown(code) {
         if (code === 'KeyJ') startAttack(f, 'light', player.data.light);
         if (code === 'KeyK') tryHeavy();
         if (code === 'KeyL') trySpecial();
+        // B = dedicated block (replaces hold-back-toward-boss). Works in stage + fight.
         if (code === 'KeyH' && player.flasks > 0 && f.hp < f.maxHp) { useFlask(); }
         return;
     }
@@ -1185,12 +1184,8 @@ function updateFighter(f, dt, isBoss) {
         if (keys['ArrowLeft'] || keys['KeyA']) walkDir = -1;
         if (keys['ArrowRight'] || keys['KeyD']) walkDir = 1;
 
-        // Block = holding away from boss (only meaningful in boss fight; stage mode = no blocking)
-        let isBlocking = false;
-        if (gameState === STATE.FIGHT && boss.fighter) {
-            const awayFromBoss = boss.fighter.x > f.x ? -1 : 1;
-            isBlocking = walkDir === awayFromBoss && walkDir !== 0;
-        }
+        // Dedicated block button - hold B in either stage or fight mode
+        const isBlocking = !!keys['KeyB'];
 
         // Crouch
         const isCrouching = (keys['ArrowDown'] || keys['KeyS']) && f.onGround;
@@ -1740,15 +1735,17 @@ function updateEnemies(dt) {
                 e.vx = 0;
                 e.state = 'idle';
                 if (e.attackTimer <= 0) {
-                    // Swipe attack
+                    // Swipe attack - blockable
                     if (dist < e.attackRange && player.fighter.hitTimer <= 0 && player.fighter.invuln <= 0) {
-                        player.fighter.hp -= e.damage;
-                        player.fighter.hitTimer = 0.25;
-                        player.fighter.vx = -Math.sign(dx) * 250;
+                        const blocked = player.fighter.state === 'blocking';
+                        const dmg = blocked ? Math.ceil(e.damage * 0.40) : e.damage;
+                        player.fighter.hp -= dmg;
+                        player.fighter.hitTimer = blocked ? 0.15 : 0.25;
+                        player.fighter.vx = -Math.sign(dx) * (blocked ? 100 : 250);
                         player.fighter.hitFlash = 0.25;
-                        sfx('damage');
-                        addShake(6, 0.15);
-                        floatingTexts.push({ x: player.fighter.x, y: player.fighter.y - 130, text: `-${e.damage}`, color: '#ff5a5a', life: 0.9 });
+                        sfx(blocked ? 'block' : 'damage');
+                        addShake(blocked ? 3 : 6, 0.15);
+                        floatingTexts.push({ x: player.fighter.x, y: player.fighter.y - 130, text: blocked ? `BLOCK -${dmg}` : `-${dmg}`, color: blocked ? '#fada30' : '#ff5a5a', life: 0.9 });
                     }
                     e.attackTimer = e.attackCooldown;
                 }
@@ -1823,15 +1820,16 @@ function updateEnemies(dt) {
                     chatPush('sys', `AggroCraig: "${line}"`);
                     floatingTexts.push({ x: e.x, y: e.y - e.h - 36, text: `"${line}"`, color: '#0a5a3a', life: 2.2 });
                     if (dist < 160 && player.fighter.invuln <= 0 && player.fighter.hitTimer <= 0) {
-                        player.fighter.hp -= 11;
+                        const blocked = player.fighter.state === 'blocking';
+                        const dmg = blocked ? 4 : 11;
+                        player.fighter.hp -= dmg;
                         player.fighter.hitTimer = 0.30;
                         player.fighter.vx = Math.sign(dx) * -400;
-                        player.fighter.vy = -250;
-                        player.fighter.onGround = false;
+                        if (!blocked) { player.fighter.vy = -250; player.fighter.onGround = false; }
                         player.fighter.hitFlash = 0.3;
-                        sfx('hit_heavy');
-                        addShake(12, 0.3);
-                        floatingTexts.push({ x: player.fighter.x, y: player.fighter.y - 130, text: '-11', color: '#ff5a5a', life: 1.0 });
+                        sfx(blocked ? 'block' : 'hit_heavy');
+                        addShake(blocked ? 5 : 12, 0.3);
+                        floatingTexts.push({ x: player.fighter.x, y: player.fighter.y - 130, text: blocked ? `BLOCK -${dmg}` : `-${dmg}`, color: blocked ? '#fada30' : '#ff5a5a', life: 1.0 });
                     }
                 }
             }
@@ -1897,15 +1895,16 @@ function updateObstacles(dt) {
                     // Damage check on landing
                     const px = player.fighter.x;
                     if (Math.abs(px - o.x) < o.w / 2 + player.fighter.w / 2 && player.fighter.invuln <= 0 && player.fighter.hitTimer <= 0) {
-                        player.fighter.hp -= o.damage;
+                        const blocked = player.fighter.state === 'blocking';
+                        const dmg = blocked ? Math.ceil(o.damage * 0.40) : o.damage;
+                        player.fighter.hp -= dmg;
                         player.fighter.hitTimer = 0.30;
-                        player.fighter.vx = (px < o.x ? -1 : 1) * 300;
-                        player.fighter.vy = -250;
-                        player.fighter.onGround = false;
+                        player.fighter.vx = (px < o.x ? -1 : 1) * (blocked ? 120 : 300);
+                        if (!blocked) { player.fighter.vy = -250; player.fighter.onGround = false; }
                         player.fighter.hitFlash = 0.3;
-                        sfx('damage');
-                        addShake(10, 0.25);
-                        floatingTexts.push({ x: player.fighter.x, y: player.fighter.y - 130, text: `-${o.damage}`, color: '#ff5a5a', life: 0.9 });
+                        sfx(blocked ? 'block' : 'damage');
+                        addShake(blocked ? 4 : 10, 0.25);
+                        floatingTexts.push({ x: player.fighter.x, y: player.fighter.y - 130, text: blocked ? `BLOCK -${dmg}` : `-${dmg}`, color: blocked ? '#fada30' : '#ff5a5a', life: 0.9 });
                     }
                 }
             } else {
@@ -1944,16 +1943,18 @@ function updateObstacles(dt) {
                 // While rising, damage player if standing over it (pop-up attack)
                 if (playerOverlap && !o.hasDamagedThisRise && player.fighter.invuln <= 0 && player.fighter.hitTimer <= 0) {
                     o.hasDamagedThisRise = true;
-                    player.fighter.hp -= o.damage;
+                    const blocked = player.fighter.state === 'blocking';
+                    const dmg = blocked ? Math.ceil(o.damage * 0.40) : o.damage;
+                    player.fighter.hp -= dmg;
                     player.fighter.hitTimer = 0.35;
-                    player.fighter.vy = -350;    // launch them up off the tombstone
+                    player.fighter.vy = blocked ? -160 : -350;
                     player.fighter.vx = (player.fighter.facing < 0 ? 200 : -200);
-                    player.fighter.onGround = false;
+                    if (!blocked) player.fighter.onGround = false;
                     player.fighter.hitFlash = 0.3;
-                    sfx('damage');
-                    addShake(10, 0.25);
-                    spawnParticles(player.fighter.x, player.fighter.y - 60, '#aa3030', 12);
-                    floatingTexts.push({ x: player.fighter.x, y: player.fighter.y - 140, text: `-${o.damage} RIP`, color: '#ff5a5a', life: 1.1 });
+                    sfx(blocked ? 'block' : 'damage');
+                    addShake(blocked ? 4 : 10, 0.25);
+                    spawnParticles(player.fighter.x, player.fighter.y - 60, blocked ? '#fada30' : '#aa3030', 12);
+                    floatingTexts.push({ x: player.fighter.x, y: player.fighter.y - 140, text: blocked ? `BLOCK -${dmg}` : `-${dmg} RIP`, color: blocked ? '#fada30' : '#ff5a5a', life: 1.1 });
                 }
                 if (o.stateTimer <= 0) {
                     o.riseProgress = 1;
@@ -2257,12 +2258,13 @@ function renderTitle() {
     ctx.font = 'italic 22px Georgia';
     ctx.fillText('A confrontation with Evil Bald', W / 2, 222);
     const items = [
-        ['A / D',     'Walk forward / back (back from boss = BLOCK)'],
-        ['S',         'Crouch (avoids high attacks)'],
+        ['A / D',     'Walk left / right'],
         ['W / SPACE', 'Jump'],
-        ['J',         'Light attack (fast, low damage)'],
-        ['K',         'Heavy attack = your CHARACTER SIGNATURE move'],
-        ['L',         'ULTIMATE special (3 charges)'],
+        ['S',         'Crouch'],
+        ['B',         'BLOCK (hold) - cuts incoming damage 60%'],
+        ['J',         'Light attack (fast)'],
+        ['K',         'Signature attack (character-specific)'],
+        ['L',         'ULTIMATE (2.5s cooldown)'],
         ['H',         'Drink healing flask']
     ];
     const blockY = 280;

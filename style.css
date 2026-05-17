@@ -125,6 +125,7 @@ canvas {
 .tbtn.heavy { background: rgba(120, 60, 30, 0.7); color: #ffaa70; }
 .tbtn.ult { background: rgba(150, 110, 30, 0.7); color: #ffd060; }
 .tbtn.heal { background: rgba(40, 100, 40, 0.7); color: #c0ffc0; font-size: 12px; }
+.tbtn.block { background: rgba(80, 80, 120, 0.7); color: #c0c0ff; font-size: 14px; }
 .tbtn.confirm { width: auto; padding: 0 16px; border-radius: 32px; font-size: 14px; }
 .tbtn.slot { width: 44px; height: 44px; font-size: 16px; }
 
