@@ -1965,11 +1965,6 @@ function updateEnemies(dt) {
         // Boundary
         if (e.x < 50) e.x = 50;
         if (e.x > LEVEL_END - 50) e.x = LEVEL_END - 50;
-        // Active miniboss is locked to STAY right of the player (so view is never obstructed by DJ booth)
-        if (e === stage.lockedMiniboss) {
-            const minX = player.fighter.x + 140;
-            if (e.x < minX) { e.x = minX; e.vx = Math.max(0, e.vx); }
-        }
     }
     enemies = enemies.filter(e => e.alive || e.hp > 0);
 }
