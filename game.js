@@ -39,7 +39,9 @@ const IMAGES = {
     background_arena:        { src: 'assets/img/sprites/background_arena.png',        img: null, loaded: false },
     waiter_sprite:           { src: 'assets/img/sprites/waiter_sprite.png',           img: null, loaded: false },
     halo_grunt_enemy:        { src: 'assets/img/sprites/halo_grunt_enemy.png',        img: null, loaded: false },
-    mets_fan_enemy:          { src: 'assets/img/sprites/mets_fan_enemy.png',          img: null, loaded: false }
+    mets_fan_enemy:          { src: 'assets/img/sprites/mets_fan_enemy.png',          img: null, loaded: false },
+    spartan_enemy:           { src: 'assets/img/sprites/spartan_enemy.png',           img: null, loaded: false },
+    brute_enemy:             { src: 'assets/img/sprites/brute_enemy.png',             img: null, loaded: false }
 };
 (function loadImages() {
     Object.keys(IMAGES).forEach(key => {
@@ -230,31 +232,86 @@ const BOSS_DATA = {
 const ENEMY_TYPES = {
     halo_grunt: {
         spriteKey: 'halo_grunt_enemy',
-        w: 56, h: 110,
-        drawScale: 1.5,
-        spriteDefaultFacing: 1,   // sprite has sword on viewer's right = faces RIGHT
-        hp: 14,
-        damage: 8,
+        w: 56, h: 110, drawScale: 1.5, spriteDefaultFacing: 1,
+        hp: 6,                  // dies in 1-2 light hits
+        damage: 7,
         speed: 130,
         attackRange: 70,
         attackCooldown: 1.4,
         ai: 'melee',
-        runeReward: 8
+        runeReward: 5
     },
     mets_fan: {
         spriteKey: 'mets_fan_enemy',
-        w: 70, h: 130,
-        drawScale: 1.5,
-        spriteDefaultFacing: 1,   // sprite mid-throw faces RIGHT
-        hp: 16,
-        damage: 10,
+        w: 70, h: 130, drawScale: 1.5, spriteDefaultFacing: 1,
+        hp: 8,                  // 2 light hits
+        damage: 9,
         speed: 60,
-        attackRange: 0,             // ranged - throws baseballs
+        attackRange: 0,
         attackCooldown: 1.8,
         ai: 'ranged',
-        runeReward: 10
+        runeReward: 7
+    },
+    spartan: {
+        spriteKey: 'spartan_enemy',
+        w: 80, h: 160, drawScale: 1.45, spriteDefaultFacing: 1,
+        hp: 14,                 // tanky, 3-4 hits
+        damage: 7,
+        speed: 90,
+        attackRange: 0,         // rifle burst (ranged)
+        attackCooldown: 1.8,
+        ai: 'spartan_rifle',
+        runeReward: 12
+    },
+    brute: {
+        spriteKey: 'brute_enemy',
+        w: 95, h: 175, drawScale: 1.5, spriteDefaultFacing: 1,
+        hp: 18,                 // tankiest, 4-5 hits
+        damage: 14,
+        speed: 95,
+        attackRange: 100,       // melee hammer
+        attackCooldown: 1.9,
+        ai: 'melee',
+        runeReward: 16
     }
 };
+
+// =====================================================================
+// LEVEL LAYOUT - one continuous side-scrolling track from x=0 to LEVEL_END
+// Boss door triggers at LEVEL_END. Player walks right; camera follows.
+// =====================================================================
+const LEVEL_END = 5400;
+let cameraX = 0;
+
+const LEVEL_ENTITIES = [
+    // ZONE A - intro: halo grunts ease you in
+    { type: 'enemy',    enemyType: 'halo_grunt', x: 600 },
+    { type: 'enemy',    enemyType: 'halo_grunt', x: 780 },
+    { type: 'enemy',    enemyType: 'halo_grunt', x: 950 },
+    { type: 'enemy',    enemyType: 'spartan',    x: 1250 },
+    { type: 'pickup',   pickupType: 'heal',      x: 1550 },
+    // ZONE B - mets fans pelting you, mixed with grunts
+    { type: 'enemy',    enemyType: 'mets_fan',   x: 1850 },
+    { type: 'enemy',    enemyType: 'halo_grunt', x: 2050 },
+    { type: 'enemy',    enemyType: 'mets_fan',   x: 2250 },
+    { type: 'enemy',    enemyType: 'spartan',    x: 2450 },
+    { type: 'pickup',   pickupType: 'power',     x: 2700 },
+    // ZONE C - billboards falling + first brute
+    { type: 'obstacle', kind: 'billboard',       x: 2950 },
+    { type: 'enemy',    enemyType: 'brute',      x: 3100 },
+    { type: 'obstacle', kind: 'billboard',       x: 3300 },
+    { type: 'obstacle', kind: 'billboard',       x: 3500 },
+    { type: 'enemy',    enemyType: 'mets_fan',   x: 3650 },
+    { type: 'pickup',   pickupType: 'heal',      x: 3900 },
+    // ZONE D - tombstone gauntlet finale
+    { type: 'obstacle', kind: 'tombstone',       x: 4100 },
+    { type: 'obstacle', kind: 'tombstone',       x: 4250 },
+    { type: 'enemy',    enemyType: 'spartan',    x: 4400 },
+    { type: 'obstacle', kind: 'tombstone',       x: 4550 },
+    { type: 'enemy',    enemyType: 'brute',      x: 4700 },
+    { type: 'obstacle', kind: 'tombstone',       x: 4850 },
+    { type: 'pickup',   pickupType: 'power',     x: 5050 }
+];
 
 // Funny death messages for tombstone obstacles
 const PEOPLE_DEATHS = [
@@ -506,7 +563,7 @@ function tryBuyItem(item) {
     sfx('click');
 }
 
-// After the shop: go through STAGE (4 minion/obstacle waves) -> then boss FIGHT
+// After the shop: walk through a continuous side-scrolling level, then boss FIGHT at the end
 function startFight() {
     sfx('click');
     player.fighter = makeFighter({ x: 200, facing: 1, maxHp: player.data.maxHp, data: player.data });
@@ -522,23 +579,36 @@ function startFight() {
     enemies = [];
     obstacles = [];
     pickups = [];
+    cameraX = 0;
     hitStopTimer = 0;
     shakeTimer = 0;
     player.comboCount = 0;
     player.comboTimer = 0;
+    player.specialCd = 0;
     CHAT_MESSAGES.length = 0;
     chatPush('sys', 'Evil Bald has logged on');
     chatPush('m', 'oh no');
     chatPush('dj', 'lets gooo');
-    chatPush('sys', '!! WAVE 1: HALO GRUNTS APPROACH !!');
-    stage.wave = 1;
-    stage.phase = 'wave_active';
+    chatPush('sys', '!! Walk RIGHT to reach Evil Bald !!');
+    // Pre-spawn the entire level (entities stay dormant until camera approaches)
+    LEVEL_ENTITIES.forEach(def => {
+        if (def.type === 'enemy') {
+            const e = makeEnemy(def.enemyType, def.x);
+            e.dormant = true;
+            enemies.push(e);
+        } else if (def.type === 'obstacle') {
+            const o = def.kind === 'billboard' ? makeBillboard(def.x) : makeTombstone(def.x);
+            o.dormant = true;
+            obstacles.push(o);
+        } else if (def.type === 'pickup') {
+            pickups.push(makePickup(def.x, def.pickupType));
+        }
+    });
+    stage.phase = 'walking';
     stage.phaseTimer = 0;
-    stage.showGoArrow = false;
     stage.transitionAlpha = 0;
-    stage.bannerText = 'WAVE 1';
-    stage.bannerTimer = 2.0;
-    spawnWave(1);
+    stage.bannerText = 'GO';
+    stage.bannerTimer = 1.4;
     gameState = STATE.STAGE;
     playBossMusic();
 }
@@ -767,10 +837,10 @@ function tryHeavy() {
 }
 
 function trySpecial() {
-    if (player.specialCharges <= 0) return;
     const f = player.fighter;
     if (!canAct(f)) return;
-    player.specialCharges -= 1;
+    if ((player.specialCd || 0) > 0) return;  // brief cooldown so it can't be button-mashed
+    player.specialCd = 2.5;
     f.state = 'attacking';
     f.attackType = 'special';
     f.attackData = player.data.special;
@@ -875,6 +945,7 @@ function update(dt) {
     if (gameState !== STATE.FIGHT && gameState !== STATE.STAGE) return;
     if (hitStopTimer > 0) { hitStopTimer -= dt; return; }
     updateShake(dt);
+    if (player.specialCd > 0) player.specialCd -= dt;
 
     if (gameState === STATE.STAGE) {
         updateFighter(player.fighter, dt, false);
@@ -1144,9 +1215,10 @@ function updateFighter(f, dt, isBoss) {
         f.onGround = true;
     }
 
-    // Boundary
+    // Boundary - in stage mode the level is wider than the screen
+    const maxX = (gameState === STATE.STAGE) ? LEVEL_END - 50 : GW - 50;
     if (f.x < 50) f.x = 50;
-    if (f.x > GW - 50) f.x = GW - 50;
+    if (f.x > maxX) f.x = maxX;
 
     // data ref for fighter (for attacks)
     f.data = isBoss ? BOSS_DATA : player.data;
@@ -1539,29 +1611,45 @@ function updateDJ(dt) {
 }
 
 // =====================================================================
-// STAGE update functions
+// STAGE update functions (continuous side-scroller)
 // =====================================================================
 function updateStage(dt) {
     if (stage.bannerTimer > 0) stage.bannerTimer -= dt;
 
-    if (stage.phase === 'wave_cleared') {
-        // Watch for player crossing the right edge to advance
-        if (player.fighter.x > GW - 80) {
-            nextWave();
-        }
-    } else if (stage.phase === 'transitioning') {
-        stage.phaseTimer -= dt;
-        stage.transitionAlpha = Math.min(1, 1 - stage.phaseTimer / 1.2);
-        if (stage.phaseTimer <= 0) {
-            startBossFight();
+    // Camera follows player smoothly
+    const targetCam = player.fighter.x - GW * 0.35;
+    cameraX += (targetCam - cameraX) * 0.10;
+    cameraX = Math.max(0, Math.min(LEVEL_END - GW, cameraX));
+
+    // Wake dormant entities when camera approaches (within 1 screen width)
+    const wakeRange = GW;
+    for (const e of enemies) {
+        if (e.dormant && (e.x - player.fighter.x) < wakeRange) e.dormant = false;
+    }
+    for (const o of obstacles) {
+        if (o.dormant && (o.x - player.fighter.x) < wakeRange) {
+            o.dormant = false;
+            o.spawned = false;     // trigger spawn animation
+            o.spawnDelay = 0;
         }
     }
-    checkWaveClear();
+
+    // Boss door triggers when player reaches end of level
+    if (stage.phase !== 'transitioning' && player.fighter.x >= LEVEL_END - 120) {
+        stage.phase = 'transitioning';
+        stage.phaseTimer = 1.2;
+        chatPush('sys', '!! Approaching Evil Bald !!');
+    }
+    if (stage.phase === 'transitioning') {
+        stage.phaseTimer -= dt;
+        stage.transitionAlpha = Math.min(1, 1 - stage.phaseTimer / 1.2);
+        if (stage.phaseTimer <= 0) startBossFight();
+    }
 }
 
 function updateEnemies(dt) {
     for (const e of enemies) {
-        if (!e.alive) continue;
+        if (!e.alive || e.dormant) continue;
         e.bobPhase += dt * 5;
         if (e.hitFlash > 0) e.hitFlash -= dt;
         if (e.hitTimer > 0) {
@@ -1599,31 +1687,48 @@ function updateEnemies(dt) {
                 }
             }
         } else if (e.ai === 'ranged') {
-            // Mets fan: kite to maintain distance, throw baseballs
+            // Mets fan: kite + throw baseballs
             const ideal = 280;
-            if (dist > ideal + 50) {
-                e.vx = Math.sign(dx) * e.speed * 0.8;
-                e.state = 'walking';
-            } else if (dist < ideal - 80) {
-                e.vx = -Math.sign(dx) * e.speed * 0.9;
-                e.state = 'walking';
-            } else {
-                e.vx = 0;
-                e.state = 'idle';
+            if (dist > ideal + 50) { e.vx = Math.sign(dx) * e.speed * 0.8; e.state = 'walking'; }
+            else if (dist < ideal - 80) { e.vx = -Math.sign(dx) * e.speed * 0.9; e.state = 'walking'; }
+            else {
+                e.vx = 0; e.state = 'idle';
                 if (e.attackTimer <= 0) {
-                    // Throw baseball
                     projectiles.push({
-                        type: 'mets',
-                        x: e.x + e.facing * 30,
-                        y: e.y - e.h * 0.6,
-                        vx: e.facing * 500,
-                        vy: -180,
-                        damage: e.damage,
-                        owner: 'boss',
-                        life: 2.5,
-                        spin: 0
+                        type: 'mets', x: e.x + e.facing * 30, y: e.y - e.h * 0.6,
+                        vx: e.facing * 500, vy: -180, damage: e.damage,
+                        owner: 'boss', life: 2.5, spin: 0
                     });
                     sfx('whiff');
+                    e.attackTimer = e.attackCooldown;
+                }
+            }
+        } else if (e.ai === 'spartan_rifle') {
+            // Spartan: medium range, 3-round burst from rifle
+            const ideal = 320;
+            if (dist > ideal + 50) { e.vx = Math.sign(dx) * e.speed; e.state = 'walking'; }
+            else if (dist < ideal - 90) { e.vx = -Math.sign(dx) * e.speed * 0.85; e.state = 'walking'; }
+            else {
+                e.vx = 0; e.state = 'idle';
+                if (e.attackTimer <= 0) {
+                    // Fire 3-burst with quick succession
+                    for (let b = 0; b < 3; b++) {
+                        setTimeout(() => {
+                            if (gameState !== STATE.STAGE || !e.alive) return;
+                            projectiles.push({
+                                type: 'bullet',
+                                x: e.x + e.facing * 30,
+                                y: e.y - e.h * 0.7,
+                                vx: e.facing * 720,
+                                vy: -20 + Math.random() * 40,
+                                damage: e.damage,
+                                owner: 'boss',
+                                life: 1.8,
+                                spin: 0
+                            });
+                            sfx('hit_light');
+                        }, b * 100);
+                    }
                     e.attackTimer = e.attackCooldown;
                 }
             }
@@ -1638,8 +1743,7 @@ function updateEnemies(dt) {
 
 function updateObstacles(dt) {
     for (const o of obstacles) {
-        if (o.destroyed) continue;
-        // Spawn delay handling
+        if (o.destroyed || o.dormant) continue;
         if (!o.spawned) {
             o.spawnDelay -= dt;
             if (o.spawnDelay > 0) continue;
@@ -2325,6 +2429,20 @@ function drawFighter(f, spriteKey, who) {
 }
 
 function drawProjectile(p) {
+    if (p.type === 'bullet') {
+        // Spartan rifle round - bright tracer streak
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.fillStyle = '#fada30';
+        ctx.shadowColor = '#fa9030';
+        ctx.shadowBlur = 12;
+        ctx.fillRect(-16, -3, 32, 6);
+        ctx.fillStyle = '#ffeec0';
+        ctx.fillRect(-16, -1, 24, 2);
+        ctx.shadowBlur = 0;
+        ctx.restore();
+        return;
+    }
     if (p.type === 'question') {
         // Ladder Man's "???" - giant glowing yellow question marks
         ctx.save();
@@ -2444,9 +2562,14 @@ function drawDJBooth() {
 }
 
 function renderStage() {
-    // Background
+    // Parallax-ish background: tile the arena image horizontally, scrolling at half rate
     if (IMAGES.background_arena.loaded) {
-        ctx.drawImage(IMAGES.background_arena.img, 0, 0, GW, H);
+        const bgW = GW;
+        const parallax = cameraX * 0.5;
+        let bgX = -((parallax % bgW + bgW) % bgW);
+        for (let x = bgX; x < GW; x += bgW) {
+            ctx.drawImage(IMAGES.background_arena.img, x, 0, bgW, H);
+        }
     } else {
         const grad = ctx.createLinearGradient(0, 0, 0, H);
         grad.addColorStop(0, '#0a0202'); grad.addColorStop(0.5, '#3a0a08'); grad.addColorStop(1, '#0a0202');
@@ -2458,13 +2581,45 @@ function renderStage() {
     ctx.fillStyle = '#3a1a18';
     ctx.fillRect(0, FLOOR_Y, GW, 3);
 
-    // DJ booth bottom-left
-    drawDJBooth();
+    // ============ WORLD-SPACE rendering (translated by -cameraX) ============
+    ctx.save();
+    ctx.translate(-cameraX, 0);
 
-    // Obstacles (behind enemies/player so they look like part of the scene)
-    obstacles.forEach(drawObstacle);
+    // Distance markers along the floor (subtle visual feedback that you're moving)
+    for (let x = 0; x < LEVEL_END; x += 400) {
+        ctx.fillStyle = 'rgba(150, 60, 30, 0.3)';
+        ctx.fillRect(x, FLOOR_Y + 12, 4, 4);
+    }
+
+    // Boss door at the end of the level
+    if (player.fighter.x > LEVEL_END - 1200) {
+        const dx = LEVEL_END - 60;
+        // Door frame
+        ctx.fillStyle = '#0a0303';
+        ctx.fillRect(dx - 6, FLOOR_Y - 290, 130, 290);
+        ctx.fillStyle = '#3a1818';
+        ctx.fillRect(dx, FLOOR_Y - 280, 110, 280);
+        ctx.fillStyle = '#5a2828';
+        ctx.fillRect(dx + 8, FLOOR_Y - 270, 94, 260);
+        // Door wood pattern
+        ctx.fillStyle = '#2a1010';
+        for (let yy = 0; yy < 6; yy++) ctx.fillRect(dx + 10, FLOOR_Y - 270 + yy * 40, 90, 2);
+        // Sigil / label
+        ctx.fillStyle = '#fada30';
+        ctx.font = 'bold 20px Georgia';
+        ctx.textAlign = 'center';
+        ctx.shadowColor = '#6a1a08'; ctx.shadowBlur = 12;
+        ctx.fillText('EVIL BALD', dx + 55, FLOOR_Y - 300);
+        ctx.fillStyle = '#c41818';
+        ctx.font = '14px Georgia';
+        ctx.fillText('inside', dx + 55, FLOOR_Y - 282);
+        ctx.shadowBlur = 0;
+    }
+
+    // Obstacles
+    obstacles.forEach(o => { if (!o.dormant) drawObstacle(o); });
     // Enemies
-    enemies.forEach(drawEnemy);
+    enemies.forEach(e => { if (!e.dormant) drawEnemy(e); });
     // Pickups
     pickups.forEach(drawPickup);
     // Projectiles
@@ -2478,7 +2633,7 @@ function renderStage() {
         ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
         ctx.globalAlpha = 1;
     });
-    // Floating texts
+    // Floating texts (world-positioned)
     floatingTexts.forEach(t => {
         ctx.fillStyle = t.color;
         ctx.globalAlpha = Math.min(1, t.life * 1.5);
@@ -2489,24 +2644,12 @@ function renderStage() {
         ctx.shadowBlur = 0; ctx.globalAlpha = 1;
     });
 
-    // HUD
-    drawStageHUD();
+    ctx.restore();
+    // ============ END world-space ============
 
-    // GO arrow
-    if (stage.showGoArrow) {
-        const pulse = 0.6 + Math.sin(Date.now() / 200) * 0.4;
-        ctx.fillStyle = `rgba(250, 218, 48, ${pulse})`;
-        ctx.font = 'bold 36px Georgia';
-        ctx.textAlign = 'right';
-        ctx.shadowColor = '#000'; ctx.shadowBlur = 8;
-        const arrowX = GW - 40;
-        const arrowY = H / 2 - 40;
-        ctx.fillText('GO >>', arrowX, arrowY);
-        ctx.fillStyle = `rgba(255, 240, 200, ${pulse * 0.5})`;
-        ctx.font = '16px Georgia';
-        ctx.fillText(stage.wave < 4 ? `to wave ${stage.wave + 1}` : 'to EVIL BALD', arrowX, arrowY + 22);
-        ctx.shadowBlur = 0;
-    }
+    // Screen-locked overlays
+    drawDJBooth();
+    drawStageHUD();
 
     // Wave banner
     if (stage.bannerTimer > 0) {
@@ -2691,30 +2834,44 @@ function drawPickup(p) {
 }
 
 function drawStageHUD() {
-    // Player HP bar top-left
     drawHPBar(40, 30, 340, 28, player.fighter.hp, player.fighter.maxHp, '#5aafff', player.data.name);
-    ctx.fillStyle = '#fada30';
-    ctx.font = 'bold 14px Georgia';
+
+    // Special cooldown bar (replaces charges)
+    const cdMax = 2.5;
+    const cdNow = Math.max(0, cdMax - (player.specialCd || 0));
+    drawHPBar(40, 66, 200, 10, cdNow, cdMax, '#fada30', '');
+    ctx.fillStyle = (player.specialCd || 0) <= 0 ? '#fada30' : '#888';
+    ctx.font = 'bold 11px Georgia';
     ctx.textAlign = 'left';
-    ctx.fillText(`SPECIAL (L): ${player.specialCharges}`, 40, 80);
+    ctx.fillText((player.specialCd || 0) <= 0 ? 'SPECIAL (L) READY' : `SPECIAL CD ${(player.specialCd).toFixed(1)}s`, 40, 90);
+
     ctx.fillStyle = '#5aff5a';
-    ctx.fillText(`FLASKS (H): ${player.flasks}`, 200, 80);
+    ctx.font = 'bold 14px Georgia';
+    ctx.fillText(`FLASKS (H): ${player.flasks}`, 260, 90);
     ctx.fillStyle = '#fada30';
-    ctx.fillText(`Runes: ${player.runes}`, 360, 80);
-    // Wave indicator top-right of game area
+    ctx.fillText(`Runes: ${player.runes}`, 420, 90);
+
+    // Progress bar - distance through the level (top-right of game area)
+    const progressW = 300;
+    const progressX = GW - progressW - 20;
+    const progressY = 36;
+    const pct = Math.min(1, player.fighter.x / LEVEL_END);
+    ctx.fillStyle = '#000';
+    ctx.fillRect(progressX - 2, progressY - 2, progressW + 4, 16);
+    ctx.fillStyle = '#1a0808';
+    ctx.fillRect(progressX, progressY, progressW, 12);
+    ctx.fillStyle = '#c41818';
+    ctx.fillRect(progressX, progressY, progressW * pct, 12);
+    // Player marker
+    ctx.fillStyle = '#5aafff';
+    ctx.fillRect(progressX + progressW * pct - 2, progressY - 2, 4, 16);
+    // Boss icon at end
+    ctx.fillStyle = '#fada30';
+    ctx.fillRect(progressX + progressW - 4, progressY - 4, 8, 20);
     ctx.fillStyle = '#d4af37';
-    ctx.font = 'bold 20px Georgia';
+    ctx.font = 'bold 12px Georgia';
     ctx.textAlign = 'right';
-    ctx.fillText(`WAVE ${stage.wave} / 4`, GW - 20, 32);
-    // Enemies remaining
-    const alive = enemies.filter(e => e.alive).length;
-    const active = obstacles.filter(o => !o.destroyed && !o.passed && o.spawned).length;
-    const enemiesLeft = alive + active;
-    if (stage.phase === 'wave_active') {
-        ctx.fillStyle = '#bbbbbb';
-        ctx.font = '15px Georgia';
-        ctx.fillText(`Threats remaining: ${enemiesLeft}`, GW - 20, 56);
-    }
+    ctx.fillText('-> EVIL BALD', GW - 20, progressY - 4);
 }
 
 function drawFlagAttack() {
