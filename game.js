@@ -42,7 +42,13 @@ const IMAGES = {
     mets_fan_enemy:          { src: 'assets/img/sprites/mets_fan_enemy.png',          img: null, loaded: false },
     spartan_enemy:           { src: 'assets/img/sprites/spartan_enemy.png',           img: null, loaded: false },
     brute_enemy:             { src: 'assets/img/sprites/brute_enemy.png',             img: null, loaded: false },
-    aggrocraig_enemy:        { src: 'assets/img/sprites/aggrocraig_enemy.png',        img: null, loaded: false }
+    aggrocraig_enemy:        { src: 'assets/img/sprites/aggrocraig_enemy.png',        img: null, loaded: false },
+    mtg_lightning_bolt:      { src: 'assets/img/sprites/mtg_lightning_bolt.png',      img: null, loaded: false },
+    mtg_counterspell:        { src: 'assets/img/sprites/mtg_counterspell.png',        img: null, loaded: false },
+    mtg_sol_ring:            { src: 'assets/img/sprites/mtg_sol_ring.png',            img: null, loaded: false },
+    mtg_black_lotus:         { src: 'assets/img/sprites/mtg_black_lotus.png',         img: null, loaded: false },
+    mtg_giant_spider:        { src: 'assets/img/sprites/mtg_giant_spider.png',        img: null, loaded: false },
+    mtg_shivan_dragon:       { src: 'assets/img/sprites/mtg_shivan_dragon.png',       img: null, loaded: false }
 };
 (function loadImages() {
     Object.keys(IMAGES).forEach(key => {
@@ -712,14 +718,15 @@ const FIGURINE_TYPES = [
     { name: 'WOLVERINE',       body: '#fada30', accent: '#1a3a1a', ip: 'MARVEL' }
 ];
 
-// MtG creature card templates - each one has its own stats + behavior
+// MtG creature card templates - each one has its own stats + behavior.
+// All deal a uniform 10 damage to the boss per kill (so 400 HP = 40 creatures).
 const MTG_CREATURE_TYPES = [
-    { name: 'LIGHTNING BOLT',  color: '#c41818', hp: 4,  damage: 6,  speed: 200, ai: 'ranged_zap',  bossDmgOnKill: 14 },
-    { name: 'COUNTERSPELL',    color: '#3a5aff', hp: 8,  damage: 7,  speed: 110, ai: 'melee',       bossDmgOnKill: 16 },
-    { name: 'SOL RING',        color: '#aa7800', hp: 6,  damage: 5,  speed: 180, ai: 'melee_fast',  bossDmgOnKill: 12 },
-    { name: 'BLACK LOTUS',     color: '#1a1a1a', hp: 12, damage: 10, speed: 75,  ai: 'melee_heavy', bossDmgOnKill: 22 },
-    { name: 'GIANT SPIDER',    color: '#5a2a4a', hp: 7,  damage: 8,  speed: 140, ai: 'melee',       bossDmgOnKill: 14 },
-    { name: 'SHIVAN DRAGON',   color: '#c44818', hp: 14, damage: 12, speed: 90,  ai: 'melee_heavy', bossDmgOnKill: 24 }
+    { name: 'LIGHTNING BOLT',  color: '#c41818', hp: 4,  damage: 6,  speed: 200, ai: 'ranged_zap',  bossDmgOnKill: 10, art: 'mtg_lightning_bolt' },
+    { name: 'COUNTERSPELL',    color: '#3a5aff', hp: 8,  damage: 7,  speed: 110, ai: 'melee',       bossDmgOnKill: 10, art: 'mtg_counterspell' },
+    { name: 'SOL RING',        color: '#aa7800', hp: 6,  damage: 5,  speed: 180, ai: 'melee_fast',  bossDmgOnKill: 10, art: 'mtg_sol_ring' },
+    { name: 'BLACK LOTUS',     color: '#1a1a1a', hp: 12, damage: 10, speed: 75,  ai: 'melee_heavy', bossDmgOnKill: 10, art: 'mtg_black_lotus' },
+    { name: 'GIANT SPIDER',    color: '#5a2a4a', hp: 7,  damage: 8,  speed: 140, ai: 'melee',       bossDmgOnKill: 10, art: 'mtg_giant_spider' },
+    { name: 'SHIVAN DRAGON',   color: '#c44818', hp: 14, damage: 12, speed: 90,  ai: 'melee_heavy', bossDmgOnKill: 10, art: 'mtg_shivan_dragon' }
 ];
 
 // Revival sequence - boss floats up cloaked + endlessly summons MtG creatures.
@@ -729,8 +736,8 @@ function triggerEvilBaldRevive() {
     boss.cloaked = true;
     boss.reviveTimer = 2.4;
     boss.phase = 3;
-    boss.fighter.hp = 140;          // killed-by-creature-deaths HP pool
-    boss.fighter.maxHp = 140;
+    boss.fighter.hp = 400;          // big HP pool - takes 40 creature kills (10 dmg each)
+    boss.fighter.maxHp = 400;
     boss.fighter.state = 'idle';
     boss.fighter.hitTimer = 0;
     boss.fighter.attackPhase = 'none';
@@ -4087,59 +4094,46 @@ function drawBossCards() {
         ctx.textAlign = 'center';
         ctx.fillText(c.name, c.x, topY + 12);
         // Art window
+        const artX = c.x - c.w / 2 + 3;
+        const artY = topY + 18;
+        const artW = c.w - 6;
+        const artH = c.h * 0.5;
         ctx.fillStyle = c.color;
-        ctx.fillRect(c.x - c.w / 2 + 3, topY + 18, c.w - 6, c.h * 0.5);
-        // Iconic shape inside art area depending on creature type
-        ctx.save();
-        ctx.translate(c.x, topY + 18 + c.h * 0.25);
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
-        if (c.name === 'LIGHTNING BOLT') {
-            // Zigzag bolt
+        ctx.fillRect(artX, artY, artW, artH);
+        // Use the Nano Banana creature illustration if loaded, else fall back to procedural icon
+        const artSprite = c.art && IMAGES[c.art] && IMAGES[c.art].loaded ? IMAGES[c.art].img : null;
+        if (artSprite) {
+            // Draw the creature art fitted into the card frame (cover-fit, slight inset)
+            ctx.save();
+            // Clip to the art window so the creature doesn't bleed outside the frame
             ctx.beginPath();
-            ctx.moveTo(-3, -15); ctx.lineTo(4, -3); ctx.lineTo(-2, -1); ctx.lineTo(4, 14); ctx.lineTo(-2, 4); ctx.lineTo(3, 2);
-            ctx.closePath(); ctx.fill();
-        } else if (c.name === 'SOL RING') {
-            // Ring shape
-            ctx.beginPath(); ctx.arc(0, 0, 12, 0, Math.PI * 2); ctx.stroke();
-            ctx.strokeStyle = '#fff'; ctx.lineWidth = 4;
-            ctx.beginPath(); ctx.arc(0, 0, 9, 0, Math.PI * 2); ctx.stroke();
-        } else if (c.name === 'BLACK LOTUS') {
-            // 5-petal flower
-            for (let p = 0; p < 5; p++) {
-                ctx.save();
-                ctx.rotate((p / 5) * Math.PI * 2);
-                ctx.beginPath();
-                ctx.ellipse(0, -8, 4, 10, 0, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.restore();
-            }
-        } else if (c.name === 'COUNTERSPELL') {
-            // Spiral
-            ctx.beginPath();
-            for (let a = 0; a < Math.PI * 4; a += 0.2) {
-                const r = a * 1.2;
-                if (a === 0) ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r);
-                else ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
-            }
-            ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
-        } else if (c.name === 'SHIVAN DRAGON') {
-            // Dragon-ish triangle
-            ctx.beginPath();
-            ctx.moveTo(-10, 8); ctx.lineTo(10, 8); ctx.lineTo(0, -12);
-            ctx.closePath(); ctx.fill();
-            ctx.fillStyle = '#1a0808';
-            ctx.fillRect(-3, -3, 6, 4);
+            ctx.rect(artX, artY, artW, artH);
+            ctx.clip();
+            // Cover-fit: scale to fill while preserving aspect
+            const aspect = artSprite.width / artSprite.height;
+            let drawW = artW, drawH = artW / aspect;
+            if (drawH < artH) { drawH = artH; drawW = artH * aspect; }
+            const drawDX = artX + (artW - drawW) / 2;
+            const drawDY = artY + (artH - drawH) / 2;
+            ctx.drawImage(artSprite, drawDX, drawDY, drawW, drawH);
+            ctx.restore();
         } else {
-            // Generic spider/creature - X with legs
-            ctx.beginPath();
-            for (let leg = 0; leg < 8; leg++) {
-                const a = (leg / 8) * Math.PI * 2;
-                ctx.moveTo(0, 0); ctx.lineTo(Math.cos(a) * 10, Math.sin(a) * 10);
+            // Procedural fallback - simple iconic shapes per creature
+            ctx.save();
+            ctx.translate(c.x, artY + artH / 2);
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
+            if (c.name === 'LIGHTNING BOLT') {
+                ctx.beginPath();
+                ctx.moveTo(-3, -15); ctx.lineTo(4, -3); ctx.lineTo(-2, -1); ctx.lineTo(4, 14); ctx.lineTo(-2, 4); ctx.lineTo(3, 2);
+                ctx.closePath(); ctx.fill();
+            } else if (c.name === 'SOL RING') {
+                ctx.strokeStyle = '#fff'; ctx.lineWidth = 4;
+                ctx.beginPath(); ctx.arc(0, 0, 9, 0, Math.PI * 2); ctx.stroke();
+            } else {
+                ctx.beginPath(); ctx.arc(0, 0, 6, 0, Math.PI * 2); ctx.fill();
             }
-            ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
-            ctx.beginPath(); ctx.arc(0, 0, 4, 0, Math.PI * 2); ctx.fill();
+            ctx.restore();
         }
-        ctx.restore();
         // Type line
         ctx.fillStyle = '#2a1810';
         ctx.fillRect(c.x - c.w / 2 + 3, topY + 18 + c.h * 0.5 + 2, c.w - 6, 9);
