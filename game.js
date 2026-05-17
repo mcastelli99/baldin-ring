@@ -363,16 +363,47 @@ const PEOPLE_DEATHS = [
     'rip - tried to leave the chat'
 ];
 
-// Spam content for falling billboards (his actual posts)
+// Spam content for falling billboards (Andrew's actual posts).
+// Every food pic uses his signature in-joke: "BEST [food] I EVER HAD".
+// Flex pics keep gym-bro energy.
 const BILLBOARD_CONTENT = [
-    { type: 'food',  label: 'gym meal 800cal', color: '#c87830' },
-    { type: 'flex',  label: 'PR DAY', color: '#a02828' },
-    { type: 'food',  label: 'protein bowl', color: '#c87830' },
-    { type: 'flex',  label: '12 wks shredded', color: '#a02828' },
-    { type: 'food',  label: 'meal prep sunday', color: '#c87830' },
-    { type: 'flex',  label: '405 deadlift', color: '#a02828' },
-    { type: 'food',  label: 'cant eat carbs', color: '#c87830' },
-    { type: 'flex',  label: 'progress pic', color: '#a02828' }
+    { type: 'food',  label: 'BEST STEAK I EVER HAD',     color: '#c87830' },
+    { type: 'food',  label: 'BEST BURGER I EVER HAD',    color: '#c87830' },
+    { type: 'food',  label: 'BEST WAGYU I EVER HAD',     color: '#c87830' },
+    { type: 'food',  label: 'BEST SUSHI I EVER HAD',     color: '#c87830' },
+    { type: 'food',  label: 'BEST TACOS I EVER HAD',     color: '#c87830' },
+    { type: 'food',  label: 'BEST RAMEN I EVER HAD',     color: '#c87830' },
+    { type: 'food',  label: 'BEST PIZZA I EVER HAD',     color: '#c87830' },
+    { type: 'food',  label: 'BEST SMASH BURGER I EVER HAD', color: '#c87830' },
+    { type: 'flex',  label: 'PR DAY',                    color: '#a02828' },
+    { type: 'flex',  label: '12 weeks shredded',         color: '#a02828' },
+    { type: 'flex',  label: '405 deadlift',              color: '#a02828' },
+    { type: 'flex',  label: 'progress pic',              color: '#a02828' }
+];
+
+// AggroCraig dialogue pools - he yells these during attacks
+const AGGROCRAIG_BREATH_LINES = [
+    "They cut out 3 feet of my colon",
+    "I couldnt eat for MONTHS",
+    "You dont understand my pain",
+    "Crohns isnt a JOKE",
+    "Have you tried the BRAT diet",
+    "Doctors said I was LUCKY"
+];
+const AGGROCRAIG_POISON_LINES = [
+    "My intestines are FUSED",
+    "I lost 40 pounds in 2 weeks",
+    "I dont even DIGEST",
+    "Probiotics did NOTHING",
+    "This is what REMISSION feels like"
+];
+const AGGROCRAIG_JETS_LINES = [
+    "The Jets are signing TUA",
+    "Aaron Rodgers is COMING BACK",
+    "Sauce Gardner is HIM",
+    "The Jets are SUPER BOWL bound",
+    "JETS JETS JETS",
+    "THIS is the year"
 ];
 
 // Stage progression state
@@ -1752,7 +1783,9 @@ function updateEnemies(dt) {
                 e.lastMove = (e.lastMove || 0) + 1;
                 if (move === 0) {
                     // BAD BREATH - sickly green cone projectile, short range
-                    chatPush('sys', 'AggroCraig: aaaaagh');
+                    const line = AGGROCRAIG_BREATH_LINES[Math.floor(Math.random() * AGGROCRAIG_BREATH_LINES.length)];
+                    chatPush('sys', `AggroCraig: "${line}"`);
+                    floatingTexts.push({ x: e.x, y: e.y - e.h - 36, text: `"${line}"`, color: '#aaffaa', life: 2.2 });
                     for (let i = 0; i < 5; i++) {
                         projectiles.push({
                             type: 'breath',
@@ -1769,7 +1802,9 @@ function updateEnemies(dt) {
                     sfx('whiff');
                 } else if (move === 1) {
                     // POISON - sickly cloud puff that hangs around player
-                    chatPush('sys', 'AggroCraig: my CROHNS');
+                    const line = AGGROCRAIG_POISON_LINES[Math.floor(Math.random() * AGGROCRAIG_POISON_LINES.length)];
+                    chatPush('sys', `AggroCraig: "${line}"`);
+                    floatingTexts.push({ x: e.x, y: e.y - e.h - 36, text: `"${line}"`, color: '#aaffaa', life: 2.2 });
                     projectiles.push({
                         type: 'poison',
                         x: e.x + e.facing * 50,
@@ -1784,8 +1819,9 @@ function updateEnemies(dt) {
                     sfx('damage');
                 } else {
                     // JETS FLAG SWING - wide back-and-forth swing (hits if you're too close)
-                    chatPush('sys', 'AggroCraig: J! E! T! S! JETS JETS JETS!');
-                    floatingTexts.push({ x: e.x, y: e.y - e.h - 30, text: 'GO JETS', color: '#0a5a3a', life: 1.4 });
+                    const line = AGGROCRAIG_JETS_LINES[Math.floor(Math.random() * AGGROCRAIG_JETS_LINES.length)];
+                    chatPush('sys', `AggroCraig: "${line}"`);
+                    floatingTexts.push({ x: e.x, y: e.y - e.h - 36, text: `"${line}"`, color: '#0a5a3a', life: 2.2 });
                     if (dist < 160 && player.fighter.invuln <= 0 && player.fighter.hitTimer <= 0) {
                         player.fighter.hp -= 11;
                         player.fighter.hitTimer = 0.30;
@@ -2935,7 +2971,7 @@ function drawObstacle(o) {
         ctx.fillStyle = '#1a1014';
         ctx.fillRect(-o.w / 2, -o.h / 2, o.w, o.h);
         ctx.fillStyle = o.contentColor;
-        ctx.fillRect(-o.w / 2 + 8, -o.h / 2 + 16, o.w - 16, o.h - 30);
+        ctx.fillRect(-o.w / 2 + 8, -o.h / 2 + 16, o.w - 16, o.h - 44);
         // Header strip (mimic instagram top bar)
         ctx.fillStyle = '#0a0608';
         ctx.fillRect(-o.w / 2, -o.h / 2, o.w, 14);
@@ -2947,15 +2983,15 @@ function drawObstacle(o) {
         const imgKey = 'spam_' + o.contentType;
         if (IMAGES[imgKey] && IMAGES[imgKey].loaded) {
             const img = IMAGES[imgKey].img;
-            ctx.drawImage(img, -o.w / 2 + 14, -o.h / 2 + 22, o.w - 28, o.h - 46);
+            ctx.drawImage(img, -o.w / 2 + 14, -o.h / 2 + 22, o.w - 28, o.h - 60);
         }
-        // Label at bottom
+        // Caption (bottom of post) - 2 lines, white-on-black, supports the long "BEST X I EVER HAD" format
         ctx.fillStyle = '#000';
-        ctx.fillRect(-o.w / 2, o.h / 2 - 16, o.w, 16);
+        ctx.fillRect(-o.w / 2, o.h / 2 - 30, o.w, 30);
         ctx.fillStyle = '#fff';
-        ctx.font = 'bold 11px Arial';
+        ctx.font = 'bold 10px Arial';
         ctx.textAlign = 'center';
-        ctx.fillText(o.contentLabel, 0, o.h / 2 - 4);
+        wrapText(o.contentLabel, 0, o.h / 2 - 18, o.w - 10, 11);
         // Hit flash
         if (o.hitFlash > 0) {
             ctx.fillStyle = `rgba(255, 255, 255, ${o.hitFlash * 2})`;
