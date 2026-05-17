@@ -1,0 +1,38 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    background: #000;
+    color: #d4af37;
+    font-family: 'Trajan Pro', Georgia, serif;
+    overflow: hidden;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+#game-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+}
+
+canvas {
+    background: #1a0808;
+    border: 2px solid #6a4818;
+    box-shadow: 0 0 40px rgba(100, 20, 20, 0.5);
+    max-width: 100%;
+    height: auto;
+}
+
+#controls-help {
+    color: #8a7838;
+    font-size: 14px;
+    font-family: Georgia, serif;
+    letter-spacing: 0.5px;
+}
+
+#controls-help strong {
+    color: #d4af37;
+}

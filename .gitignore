@@ -1,0 +1,8 @@
+# Generated temp files from ElevenLabs Music API generation
+assets/audio/_body.json
+assets/audio/_response.bin
+
+# Node / build junk (if ever added later)
+node_modules/
+.DS_Store
+Thumbs.db
