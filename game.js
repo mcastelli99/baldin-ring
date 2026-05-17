@@ -37,7 +37,9 @@ const IMAGES = {
     spam_rip:                { src: 'assets/img/sprites/spam_rip.png',                img: null, loaded: false },
     spam_flex:               { src: 'assets/img/sprites/spam_flex.png',               img: null, loaded: false },
     background_arena:        { src: 'assets/img/sprites/background_arena.png',        img: null, loaded: false },
-    waiter_sprite:           { src: 'assets/img/sprites/waiter_sprite.png',           img: null, loaded: false }
+    waiter_sprite:           { src: 'assets/img/sprites/waiter_sprite.png',           img: null, loaded: false },
+    halo_grunt_enemy:        { src: 'assets/img/sprites/halo_grunt_enemy.png',        img: null, loaded: false },
+    mets_fan_enemy:          { src: 'assets/img/sprites/mets_fan_enemy.png',          img: null, loaded: false }
 };
 (function loadImages() {
     Object.keys(IMAGES).forEach(key => {
@@ -70,7 +72,7 @@ function stopBossMusic() {
 // =====================================================================
 // STATE
 // =====================================================================
-const STATE = { TITLE: 'title', CHAR_SELECT: 'char_select', SHOP: 'shop', FIGHT: 'fight', WIN: 'win', LOSE: 'lose' };
+const STATE = { TITLE: 'title', CHAR_SELECT: 'char_select', SHOP: 'shop', STAGE: 'stage', FIGHT: 'fight', WIN: 'win', LOSE: 'lose' };
 let gameState = STATE.TITLE;
 
 // Hit-stop and screen-shake (the juice)
@@ -222,6 +224,91 @@ const BOSS_DATA = {
     spamWall:   { startup: 0.40, active: 0.10, recovery: 0.30, damage: 12, projectile: 'wall', name: 'spamWall' }
 };
 
+// =====================================================================
+// STAGE MODE - side-scrolling beat-em-up before the boss
+// =====================================================================
+const ENEMY_TYPES = {
+    halo_grunt: {
+        spriteKey: 'halo_grunt_enemy',
+        w: 56, h: 110,
+        drawScale: 1.5,
+        spriteDefaultFacing: 1,   // sprite has sword on viewer's right = faces RIGHT
+        hp: 14,
+        damage: 8,
+        speed: 130,
+        attackRange: 70,
+        attackCooldown: 1.4,
+        ai: 'melee',
+        runeReward: 8
+    },
+    mets_fan: {
+        spriteKey: 'mets_fan_enemy',
+        w: 70, h: 130,
+        drawScale: 1.5,
+        spriteDefaultFacing: 1,   // sprite mid-throw faces RIGHT
+        hp: 16,
+        damage: 10,
+        speed: 60,
+        attackRange: 0,             // ranged - throws baseballs
+        attackCooldown: 1.8,
+        ai: 'ranged',
+        runeReward: 10
+    }
+};
+
+// Funny death messages for tombstone obstacles
+const PEOPLE_DEATHS = [
+    'rip - died of cringe',
+    'rip - left on read',
+    'rip - opened the link',
+    'rip - couldnt mute',
+    'rip - read the article',
+    'rip - died waiting for reply',
+    'rip - watched the halo trailer',
+    'rip - reply guy',
+    'rip - fomo',
+    'rip - mets fan since 1986',
+    'rip - the food pic got him',
+    'rip - drowned in notifications',
+    'rip - double tapped wrong post',
+    'rip - typed too fast',
+    'rip - couldnt take a hint',
+    'rip - died of secondhand cringe',
+    'rip - fell into the group chat',
+    'rip - sent it to the wrong number',
+    'rip - argued in the comments',
+    'rip - tried to leave the chat'
+];
+
+// Spam content for falling billboards (his actual posts)
+const BILLBOARD_CONTENT = [
+    { type: 'food',  label: 'gym meal 800cal', color: '#c87830' },
+    { type: 'flex',  label: 'PR DAY', color: '#a02828' },
+    { type: 'food',  label: 'protein bowl', color: '#c87830' },
+    { type: 'flex',  label: '12 wks shredded', color: '#a02828' },
+    { type: 'food',  label: 'meal prep sunday', color: '#c87830' },
+    { type: 'flex',  label: '405 deadlift', color: '#a02828' },
+    { type: 'food',  label: 'cant eat carbs', color: '#c87830' },
+    { type: 'flex',  label: 'progress pic', color: '#a02828' }
+];
+
+// Stage progression state
+const stage = {
+    wave: 0,           // 1..4
+    phase: 'inactive', // 'walking' | 'wave_active' | 'wave_cleared' | 'transitioning'
+    phaseTimer: 0,
+    enemiesRemaining: 0,
+    obstaclesRemaining: 0,
+    showGoArrow: false,
+    transitionAlpha: 0,
+    bannerText: '',
+    bannerTimer: 0
+};
+
+let enemies = [];      // halo grunts, mets fans
+let obstacles = [];    // tombstones, billboards
+let pickups = [];      // heal, power-up, runes
+
 // Projectiles (mets tweets, slug tickets, question marks, etc)
 let projectiles = [];
 // Foodpic AOE markers (visual warnings)
@@ -361,13 +448,27 @@ function handleInputDown(code) {
         if (code === 'Space') startFight();
         return;
     }
-    if (gameState === STATE.FIGHT) {
+    if (gameState === STATE.FIGHT || gameState === STATE.STAGE) {
         const f = player.fighter;
-        // Snap-face the boss on ANY arrow / movement key press (even if mid-recovery or stunned).
-        // Fixes "stuck not facing boss" complaint.
+        // Snap-face the nearest opponent (or just face arrow direction in stage mode if no enemies)
         if (['ArrowLeft','ArrowRight','KeyA','KeyD'].includes(code)) {
             if (f.onGround && f.attackPhase !== 'active' && f.attackPhase !== 'startup') {
-                f.facing = boss.fighter.x > f.x ? 1 : -1;
+                if (gameState === STATE.FIGHT && boss.fighter) {
+                    f.facing = boss.fighter.x > f.x ? 1 : -1;
+                } else {
+                    // Stage: face nearest alive enemy, else face the direction of movement
+                    const aliveEnemies = enemies.filter(e => e.alive);
+                    if (aliveEnemies.length > 0) {
+                        let nearest = aliveEnemies[0]; let nearestDist = Math.abs(nearest.x - f.x);
+                        for (const e of aliveEnemies) {
+                            const d = Math.abs(e.x - f.x);
+                            if (d < nearestDist) { nearest = e; nearestDist = d; }
+                        }
+                        f.facing = nearest.x > f.x ? 1 : -1;
+                    } else {
+                        f.facing = (code === 'ArrowRight' || code === 'KeyD') ? 1 : -1;
+                    }
+                }
             }
         }
         if (!canAct(f)) return;
@@ -405,25 +506,22 @@ function tryBuyItem(item) {
     sfx('click');
 }
 
+// After the shop: go through STAGE (4 minion/obstacle waves) -> then boss FIGHT
 function startFight() {
     sfx('click');
-    player.fighter = makeFighter({ x: 300, facing: 1, maxHp: player.data.maxHp, data: player.data });
-    // Apply per-character body dimensions (different silhouettes for visual variety)
+    player.fighter = makeFighter({ x: 200, facing: 1, maxHp: player.data.maxHp, data: player.data });
     if (player.data.bodyW) player.fighter.w = player.data.bodyW;
     if (player.data.bodyH) player.fighter.h = player.data.bodyH;
-    boss.data = BOSS_DATA;
-    boss.fighter = makeFighter({ x: 720, facing: -1, maxHp: BOSS_DATA.maxHp, data: BOSS_DATA });
-    boss.fighter.w = 100; boss.fighter.h = 195;  // boss is the biggest, most imposing presence
-    boss.aiTimer = 2.0;
-    boss.aiAction = null;
-    boss.phase = 1;
-    boss.attackToken = 0;  // monotonic token: setTimeout callbacks check this before firing
+    boss.fighter = null;
     projectiles = [];
     aoeMarkers = [];
     floatingTexts = [];
     particles = [];
     flagAttack = null;
     waiters = [];
+    enemies = [];
+    obstacles = [];
+    pickups = [];
     hitStopTimer = 0;
     shakeTimer = 0;
     player.comboCount = 0;
@@ -432,8 +530,180 @@ function startFight() {
     chatPush('sys', 'Evil Bald has logged on');
     chatPush('m', 'oh no');
     chatPush('dj', 'lets gooo');
-    gameState = STATE.FIGHT;
+    chatPush('sys', '!! WAVE 1: HALO GRUNTS APPROACH !!');
+    stage.wave = 1;
+    stage.phase = 'wave_active';
+    stage.phaseTimer = 0;
+    stage.showGoArrow = false;
+    stage.transitionAlpha = 0;
+    stage.bannerText = 'WAVE 1';
+    stage.bannerTimer = 2.0;
+    spawnWave(1);
+    gameState = STATE.STAGE;
     playBossMusic();
+}
+
+// Triggered when player walks past the right edge after wave 4 cleared
+function startBossFight() {
+    sfx('click');
+    boss.data = BOSS_DATA;
+    boss.fighter = makeFighter({ x: 850, facing: -1, maxHp: BOSS_DATA.maxHp, data: BOSS_DATA });
+    boss.fighter.w = 100; boss.fighter.h = 195;
+    boss.aiTimer = 2.0;
+    boss.aiAction = null;
+    boss.phase = 1;
+    boss.attackToken = 0;
+    player.fighter.x = 300;
+    player.fighter.vx = 0;
+    player.fighter.vy = 0;
+    player.fighter.hitTimer = 0;
+    enemies = [];
+    obstacles = [];
+    pickups = [];
+    projectiles = [];
+    floatingTexts = [];
+    chatPush('sys', '!! EVIL BALD APPEARS !!');
+    chatPush('bald', 'finally');
+    gameState = STATE.FIGHT;
+}
+
+// =====================================================================
+// STAGE WAVE SYSTEM
+// =====================================================================
+function spawnWave(waveNum) {
+    enemies = [];
+    obstacles = [];
+    if (waveNum === 1) {
+        for (let i = 0; i < 4; i++) enemies.push(makeEnemy('halo_grunt', 700 + i * 110));
+    } else if (waveNum === 2) {
+        for (let i = 0; i < 3; i++) enemies.push(makeEnemy('mets_fan', 650 + i * 130));
+    } else if (waveNum === 3) {
+        for (let i = 0; i < 5; i++) {
+            const b = makeBillboard(450 + Math.random() * 480);
+            b.spawnDelay = i * 0.7;
+            obstacles.push(b);
+        }
+    } else if (waveNum === 4) {
+        for (let i = 0; i < 6; i++) {
+            const t = makeTombstone(420 + Math.random() * 500);
+            t.spawnDelay = i * 0.5;
+            obstacles.push(t);
+        }
+    }
+    stage.enemiesRemaining = enemies.length;
+    stage.obstaclesRemaining = obstacles.length;
+}
+
+function nextWave() {
+    if (stage.wave >= 4) {
+        stage.phase = 'transitioning';
+        stage.phaseTimer = 1.2;
+        return;
+    }
+    stage.wave += 1;
+    stage.phase = 'wave_active';
+    stage.showGoArrow = false;
+    stage.bannerText = `WAVE ${stage.wave}`;
+    stage.bannerTimer = 2.0;
+    const desc = ['', 'HALO GRUNTS', 'METS FANS', 'FALLING BILLBOARDS', 'TOMBSTONES'][stage.wave];
+    chatPush('sys', `!! WAVE ${stage.wave}: ${desc} !!`);
+    player.fighter.x = 150;
+    player.fighter.vx = 0;
+    spawnWave(stage.wave);
+}
+
+function checkWaveClear() {
+    if (stage.phase !== 'wave_active') return;
+    const aliveEnemies = enemies.filter(e => e.alive).length;
+    const activeObstacles = obstacles.filter(o => !o.destroyed && !o.passed).length;
+    if (aliveEnemies === 0 && activeObstacles === 0) {
+        // Check if all delayed-spawn obstacles have at least spawned
+        const unspawned = obstacles.filter(o => !o.spawned).length;
+        if (unspawned > 0) return;
+        stage.phase = 'wave_cleared';
+        stage.showGoArrow = true;
+        chatPush('sys', 'Wave cleared! Walk right to advance.');
+        const dropX = Math.min(GW - 150, player.fighter.x + 200);
+        const rewardType = (stage.wave === 1 || stage.wave === 3) ? 'heal' : 'power';
+        pickups.push(makePickup(dropX, rewardType));
+        // Bonus runes
+        player.runes += 15;
+        floatingTexts.push({ x: player.fighter.x, y: player.fighter.y - 180, text: '+15 RUNES', color: '#fada30', life: 1.5 });
+    }
+}
+
+// =====================================================================
+// STAGE ENTITIES - constructors
+// =====================================================================
+function makeEnemy(type, x) {
+    const d = ENEMY_TYPES[type];
+    return {
+        type, ...d,
+        x, y: FLOOR_Y,
+        vx: 0, vy: 0,
+        hp: d.hp,
+        maxHp: d.hp,
+        facing: -1,
+        state: 'idle',
+        attackTimer: d.attackCooldown * 0.6 + Math.random() * 0.4,
+        hitTimer: 0,
+        hitFlash: 0,
+        onGround: true,
+        bobPhase: Math.random() * Math.PI * 2,
+        alive: true
+    };
+}
+
+function makeBillboard(x) {
+    const content = BILLBOARD_CONTENT[Math.floor(Math.random() * BILLBOARD_CONTENT.length)];
+    return {
+        kind: 'billboard',
+        contentType: content.type,
+        contentLabel: content.label,
+        contentColor: content.color,
+        x, y: -150,
+        vy: 0,
+        w: 130, h: 130,
+        landed: false,
+        landTimer: 0,
+        damage: 14,
+        hp: 6,
+        hitFlash: 0,
+        spawnDelay: 0,
+        spawned: false,
+        destroyed: false,
+        passed: false,
+        rotation: (Math.random() - 0.5) * 0.3
+    };
+}
+
+function makeTombstone(x) {
+    return {
+        kind: 'tombstone',
+        x, y: FLOOR_Y + 100,
+        targetY: FLOOR_Y - 10,
+        w: 72, h: 110,
+        hp: 4,
+        damage: 0,
+        hitFlash: 0,
+        spawnDelay: 0,
+        spawned: false,
+        risen: false,
+        riseProgress: 0,
+        destroyed: false,
+        passed: false,
+        deathText: PEOPLE_DEATHS[Math.floor(Math.random() * PEOPLE_DEATHS.length)]
+    };
+}
+
+function makePickup(x, type) {
+    return {
+        type,
+        x, y: FLOOR_Y - 40,
+        w: 36, h: 36,
+        bobPhase: Math.random() * Math.PI * 2,
+        life: 30.0
+    };
 }
 
 function canAct(f) {
@@ -602,15 +872,34 @@ function useFlask() {
 // UPDATE
 // =====================================================================
 function update(dt) {
-    if (gameState !== STATE.FIGHT) {
-        // chat updates pause when not fighting
-        return;
-    }
-    if (hitStopTimer > 0) {
-        hitStopTimer -= dt;
-        return;
-    }
+    if (gameState !== STATE.FIGHT && gameState !== STATE.STAGE) return;
+    if (hitStopTimer > 0) { hitStopTimer -= dt; return; }
     updateShake(dt);
+
+    if (gameState === STATE.STAGE) {
+        updateFighter(player.fighter, dt, false);
+        updateEnemies(dt);
+        updateObstacles(dt);
+        updatePickups(dt);
+        updateProjectiles(dt);
+        updateParticles(dt);
+        updateFloatingTexts(dt);
+        updateComboTimer(dt);
+        updateChatTimers(dt);
+        updateDJ(dt);
+        updateStage(dt);
+        if (player.fighter.hp <= 0) {
+            player.fighter.hp = 0;
+            addShake(20, 1.0);
+            sfx('ko'); sfx('lose');
+            chatPush('sys', 'You opened the link');
+            stopBossMusic();
+            setTimeout(() => { if (gameState === STATE.STAGE) gameState = STATE.LOSE; }, 600);
+        }
+        return;
+    }
+
+    // STATE.FIGHT (existing boss fight)
     updateFighter(player.fighter, dt, false);
     updateFighter(boss.fighter, dt, true);
     updateBossAI(dt);
@@ -722,8 +1011,37 @@ function updateFighter(f, dt, isBoss) {
         }
         // Check hit during active phase
         if (f.attackPhase === 'active' && !f.hasHitThisAttack && f.attackData.range) {
-            const target = isBoss ? player.fighter : boss.fighter;
-            checkAttackHit(f, target, isBoss);
+            if (gameState === STATE.STAGE && !isBoss) {
+                // Player attack vs enemies + obstacles
+                const range = f.attackData.range;
+                const dmg = (f.attackData.damage || 0) * (player.dmgMult || 1);
+                const kb = f.attackData.knockback || 0;
+                for (const e of enemies) {
+                    if (!e.alive) continue;
+                    const overlap = Math.abs((f.x + f.facing * range / 2 + 30) - e.x) < range / 2 + e.w / 2 + 20;
+                    const backOverlap = f.attackData.both && Math.abs((f.x - f.facing * range / 2 - 30) - e.x) < range / 2 + e.w / 2 + 20;
+                    if (overlap || backOverlap) {
+                        damageEnemy(e, dmg, kb, f.facing);
+                        f.hasHitThisAttack = true;
+                        break;
+                    }
+                }
+                if (!f.hasHitThisAttack) {
+                    for (const o of obstacles) {
+                        if (o.destroyed || !o.spawned) continue;
+                        if (o.kind === 'tombstone' && !o.risen) continue;
+                        const overlap = Math.abs((f.x + f.facing * range / 2 + 30) - o.x) < range / 2 + o.w / 2 + 20;
+                        if (overlap) {
+                            damageObstacle(o, dmg, f.facing);
+                            f.hasHitThisAttack = true;
+                            break;
+                        }
+                    }
+                }
+            } else if (boss.fighter) {
+                const target = isBoss ? player.fighter : boss.fighter;
+                checkAttackHit(f, target, isBoss);
+            }
         }
     }
 
@@ -733,9 +1051,12 @@ function updateFighter(f, dt, isBoss) {
         if (keys['ArrowLeft'] || keys['KeyA']) walkDir = -1;
         if (keys['ArrowRight'] || keys['KeyD']) walkDir = 1;
 
-        // Block = holding away from boss
-        const awayFromBoss = boss.fighter.x > f.x ? -1 : 1;
-        const isBlocking = walkDir === awayFromBoss && walkDir !== 0;
+        // Block = holding away from boss (only meaningful in boss fight; stage mode = no blocking)
+        let isBlocking = false;
+        if (gameState === STATE.FIGHT && boss.fighter) {
+            const awayFromBoss = boss.fighter.x > f.x ? -1 : 1;
+            isBlocking = walkDir === awayFromBoss && walkDir !== 0;
+        }
 
         // Crouch
         const isCrouching = (keys['ArrowDown'] || keys['KeyS']) && f.onGround;
@@ -764,13 +1085,24 @@ function updateFighter(f, dt, isBoss) {
         // walking handled by AI
     }
 
-    // FACING: always face the opponent when on the ground and NOT in attack startup/active.
-    // (during recovery we allow it to update too so player doesn't get stuck wrong-way after a whiff)
-    // This runs for BOTH player and boss, regardless of canAct, fixing the "stuck facing wrong way" bug.
+    // FACING: face the opponent (or nearest enemy in stage mode) when on ground + not mid-attack
     if (f.onGround && f.attackPhase !== 'startup' && f.attackPhase !== 'active') {
-        const opponent = isBoss ? player.fighter : boss.fighter;
-        if (opponent) {
-            f.facing = opponent.x > f.x ? 1 : -1;
+        if (gameState === STATE.STAGE && !isBoss) {
+            const aliveEnemies = enemies.filter(e => e.alive);
+            if (aliveEnemies.length > 0) {
+                let nearest = aliveEnemies[0];
+                let nearestDist = Math.abs(nearest.x - f.x);
+                for (const e of aliveEnemies) {
+                    const d = Math.abs(e.x - f.x);
+                    if (d < nearestDist) { nearest = e; nearestDist = d; }
+                }
+                f.facing = nearest.x > f.x ? 1 : -1;
+            } else if (stage.showGoArrow) {
+                f.facing = 1;
+            }
+        } else {
+            const opponent = isBoss ? player.fighter : boss.fighter;
+            if (opponent) f.facing = opponent.x > f.x ? 1 : -1;
         }
     }
 
@@ -783,6 +1115,24 @@ function updateFighter(f, dt, isBoss) {
     // Apply position
     f.x += f.vx * dt;
     f.y += f.vy * dt;
+
+    // STAGE: tombstones block movement at ground level (must destroy or jump over)
+    if (gameState === STATE.STAGE && !isBoss) {
+        for (const o of obstacles) {
+            if (o.kind !== 'tombstone' || !o.spawned || !o.risen || o.destroyed) continue;
+            const tLeft = o.x - o.w / 2;
+            const tRight = o.x + o.w / 2;
+            const pLeft = f.x - f.w / 2;
+            const pRight = f.x + f.w / 2;
+            const playerFeet = f.y;
+            const tombTop = o.y - o.h;
+            // Only block if player is at ground level (overlapping tombstone height)
+            if (playerFeet > tombTop + 20 && pRight > tLeft && pLeft < tRight) {
+                if (f.vx > 0) { f.x = tLeft - f.w / 2; f.vx = 0; }
+                else if (f.vx < 0) { f.x = tRight + f.w / 2; f.vx = 0; }
+            }
+        }
+    }
 
     // Floor collision
     if (f.y >= FLOOR_Y) {
@@ -1092,16 +1442,47 @@ function updateProjectiles(dt) {
                 p.life = 0;
             }
         } else if (p.owner === 'player') {
-            const f = boss.fighter;
-            if (rectHitProj(p, f)) {
-                boss.fighter.hp -= p.damage;
-                boss.fighter.hitFlash = 0.25;
-                boss.fighter.vx = -player.fighter.facing * -150;
-                sfx('hit_light');
-                spawnParticles(f.x, f.y - 80, '#fada30', 10);
-                addShake(6, 0.15);
-                floatingTexts.push({ x: f.x, y: f.y - 120, text: `-${p.damage}`, color: '#fada30', life: 0.9 });
-                p.life = 0;
+            // Hit boss if present (FIGHT mode)
+            if (boss.fighter) {
+                const f = boss.fighter;
+                if (rectHitProj(p, f)) {
+                    boss.fighter.hp -= p.damage;
+                    boss.fighter.hitFlash = 0.25;
+                    boss.fighter.vx = -player.fighter.facing * -150;
+                    sfx('hit_light');
+                    spawnParticles(f.x, f.y - 80, '#fada30', 10);
+                    addShake(6, 0.15);
+                    floatingTexts.push({ x: f.x, y: f.y - 120, text: `-${p.damage}`, color: '#fada30', life: 0.9 });
+                    p.life = 0;
+                    continue;
+                }
+            }
+            // Hit enemies (STAGE mode)
+            for (const e of enemies) {
+                if (!e.alive) continue;
+                if (rectHitProj(p, e)) {
+                    damageEnemy(e, p.damage, 150, p.vx > 0 ? 1 : -1);
+                    p.life = 0;
+                    break;
+                }
+            }
+            // Hit obstacles (billboards use center-y, tombstones use feet-y)
+            if (p.life > 0) {
+                for (const o of obstacles) {
+                    if (o.destroyed || !o.spawned) continue;
+                    if (o.kind === 'tombstone' && !o.risen) continue;
+                    let hit = false;
+                    if (o.kind === 'billboard') {
+                        hit = p.x > o.x - o.w / 2 && p.x < o.x + o.w / 2 && p.y > o.y - o.h / 2 && p.y < o.y + o.h / 2;
+                    } else {
+                        hit = p.x > o.x - o.w / 2 && p.x < o.x + o.w / 2 && p.y > o.y - o.h && p.y < o.y;
+                    }
+                    if (hit) {
+                        damageObstacle(o, p.damage, p.vx > 0 ? 1 : -1);
+                        p.life = 0;
+                        break;
+                    }
+                }
             }
         }
         if (p.y > FLOOR_Y + 50) { p.life = 0; }
@@ -1154,8 +1535,233 @@ function updateComboTimer(dt) {
 }
 
 function updateDJ(dt) {
-    // DJ bobs faster during phase 2 (the beat drops)
-    djBobPhase += dt * (boss.phase === 2 ? 6.5 : 4.5);
+    djBobPhase += dt * ((boss.fighter && boss.phase === 2) ? 6.5 : 4.5);
+}
+
+// =====================================================================
+// STAGE update functions
+// =====================================================================
+function updateStage(dt) {
+    if (stage.bannerTimer > 0) stage.bannerTimer -= dt;
+
+    if (stage.phase === 'wave_cleared') {
+        // Watch for player crossing the right edge to advance
+        if (player.fighter.x > GW - 80) {
+            nextWave();
+        }
+    } else if (stage.phase === 'transitioning') {
+        stage.phaseTimer -= dt;
+        stage.transitionAlpha = Math.min(1, 1 - stage.phaseTimer / 1.2);
+        if (stage.phaseTimer <= 0) {
+            startBossFight();
+        }
+    }
+    checkWaveClear();
+}
+
+function updateEnemies(dt) {
+    for (const e of enemies) {
+        if (!e.alive) continue;
+        e.bobPhase += dt * 5;
+        if (e.hitFlash > 0) e.hitFlash -= dt;
+        if (e.hitTimer > 0) {
+            e.hitTimer -= dt;
+            e.x += e.vx * dt;
+            e.vx *= 0.88;
+            continue;
+        }
+        // AI
+        const dx = player.fighter.x - e.x;
+        const dist = Math.abs(dx);
+        e.facing = dx < 0 ? -1 : 1;
+        e.attackTimer -= dt;
+
+        if (e.ai === 'melee') {
+            // Halo grunt: charge in, melee swipe
+            if (dist > e.attackRange - 15) {
+                e.vx = Math.sign(dx) * e.speed;
+                e.state = 'walking';
+            } else {
+                e.vx = 0;
+                e.state = 'idle';
+                if (e.attackTimer <= 0) {
+                    // Swipe attack
+                    if (dist < e.attackRange && player.fighter.hitTimer <= 0 && player.fighter.invuln <= 0) {
+                        player.fighter.hp -= e.damage;
+                        player.fighter.hitTimer = 0.25;
+                        player.fighter.vx = -Math.sign(dx) * 250;
+                        player.fighter.hitFlash = 0.25;
+                        sfx('damage');
+                        addShake(6, 0.15);
+                        floatingTexts.push({ x: player.fighter.x, y: player.fighter.y - 130, text: `-${e.damage}`, color: '#ff5a5a', life: 0.9 });
+                    }
+                    e.attackTimer = e.attackCooldown;
+                }
+            }
+        } else if (e.ai === 'ranged') {
+            // Mets fan: kite to maintain distance, throw baseballs
+            const ideal = 280;
+            if (dist > ideal + 50) {
+                e.vx = Math.sign(dx) * e.speed * 0.8;
+                e.state = 'walking';
+            } else if (dist < ideal - 80) {
+                e.vx = -Math.sign(dx) * e.speed * 0.9;
+                e.state = 'walking';
+            } else {
+                e.vx = 0;
+                e.state = 'idle';
+                if (e.attackTimer <= 0) {
+                    // Throw baseball
+                    projectiles.push({
+                        type: 'mets',
+                        x: e.x + e.facing * 30,
+                        y: e.y - e.h * 0.6,
+                        vx: e.facing * 500,
+                        vy: -180,
+                        damage: e.damage,
+                        owner: 'boss',
+                        life: 2.5,
+                        spin: 0
+                    });
+                    sfx('whiff');
+                    e.attackTimer = e.attackCooldown;
+                }
+            }
+        }
+        e.x += e.vx * dt;
+        // Boundary
+        if (e.x < 50) e.x = 50;
+        if (e.x > GW - 50) e.x = GW - 50;
+    }
+    enemies = enemies.filter(e => e.alive || e.hp > 0);  // already-dead ones drop off
+}
+
+function updateObstacles(dt) {
+    for (const o of obstacles) {
+        if (o.destroyed) continue;
+        // Spawn delay handling
+        if (!o.spawned) {
+            o.spawnDelay -= dt;
+            if (o.spawnDelay > 0) continue;
+            o.spawned = true;
+        }
+        if (o.hitFlash > 0) o.hitFlash -= dt;
+
+        if (o.kind === 'billboard') {
+            if (!o.landed) {
+                o.vy += 1100 * dt;
+                o.y += o.vy * dt;
+                if (o.y + o.h / 2 >= FLOOR_Y) {
+                    o.y = FLOOR_Y - o.h / 2;
+                    o.landed = true;
+                    o.landTimer = 0.6;
+                    addShake(8, 0.2);
+                    spawnParticles(o.x, FLOOR_Y, '#8a6a28', 12);
+                    sfx('hit_heavy');
+                    // Damage check on landing
+                    const px = player.fighter.x;
+                    if (Math.abs(px - o.x) < o.w / 2 + player.fighter.w / 2 && player.fighter.invuln <= 0 && player.fighter.hitTimer <= 0) {
+                        player.fighter.hp -= o.damage;
+                        player.fighter.hitTimer = 0.30;
+                        player.fighter.vx = (px < o.x ? -1 : 1) * 300;
+                        player.fighter.vy = -250;
+                        player.fighter.onGround = false;
+                        player.fighter.hitFlash = 0.3;
+                        sfx('damage');
+                        addShake(10, 0.25);
+                        floatingTexts.push({ x: player.fighter.x, y: player.fighter.y - 130, text: `-${o.damage}`, color: '#ff5a5a', life: 0.9 });
+                    }
+                }
+            } else {
+                o.landTimer -= dt;
+                // After landing, becomes destructible obstacle (hit it to clear)
+                if (o.landTimer <= 0 && !o.passed) {
+                    // Check if player walked past it (left to right past x)
+                    if (player.fighter.x > o.x + 80) o.passed = true;
+                }
+            }
+        } else if (o.kind === 'tombstone') {
+            if (!o.risen) {
+                o.riseProgress = Math.min(1, o.riseProgress + dt * 1.6);
+                o.y = FLOOR_Y + 100 - (110 * o.riseProgress);
+                if (o.riseProgress >= 1) {
+                    o.risen = true;
+                    o.y = o.targetY;
+                    spawnParticles(o.x, FLOOR_Y, '#5a3a18', 10);
+                    sfx('hit_light');
+                }
+            } else {
+                // Check passed
+                if (player.fighter.x > o.x + 60 && !o.passed) {
+                    o.passed = true;
+                }
+            }
+        }
+    }
+    // Cull
+    obstacles = obstacles.filter(o => !(o.destroyed && o.hitFlash <= 0));
+}
+
+function updatePickups(dt) {
+    for (const p of pickups) {
+        p.bobPhase += dt * 3;
+        p.life -= dt;
+        // Pickup collision with player
+        const px = player.fighter.x;
+        const py = player.fighter.y - player.fighter.h / 2;
+        if (Math.abs(px - p.x) < 40 && Math.abs(py - p.y) < 60) {
+            applyPickup(p);
+            p.life = 0;
+        }
+    }
+    pickups = pickups.filter(p => p.life > 0);
+}
+
+function applyPickup(p) {
+    if (p.type === 'heal') {
+        player.fighter.hp = Math.min(player.fighter.maxHp, player.fighter.hp + 40);
+        sfx('heal');
+        floatingTexts.push({ x: player.fighter.x, y: player.fighter.y - 160, text: '+40 HP', color: '#5aff5a', life: 1.4 });
+    } else if (p.type === 'power') {
+        player.dmgMult = (player.dmgMult || 1) * 1.20;
+        sfx('parry');
+        floatingTexts.push({ x: player.fighter.x, y: player.fighter.y - 160, text: '+20% DMG', color: '#fada30', life: 1.4 });
+    }
+}
+
+// Damage an enemy from a player hit. Returns true if killed.
+function damageEnemy(e, dmg, knockback, srcFacing) {
+    e.hp -= dmg;
+    e.hitFlash = 0.25;
+    e.hitTimer = 0.25;
+    e.vx = (srcFacing || 1) * (knockback || 200);
+    sfx('hit_light');
+    spawnParticles(e.x, e.y - e.h / 2, '#ff5a5a', 8);
+    addShake(4, 0.10);
+    floatingTexts.push({ x: e.x + (Math.random() - 0.5) * 30, y: e.y - e.h - 10, text: `-${Math.round(dmg)}`, color: '#ff8080', life: 0.8 });
+    if (e.hp <= 0) {
+        e.alive = false;
+        spawnParticles(e.x, e.y - e.h / 2, '#fada30', 20);
+        sfx('hit_heavy');
+        player.runes += e.runeReward || 5;
+        floatingTexts.push({ x: e.x, y: e.y - e.h - 30, text: `+${e.runeReward} R`, color: '#fada30', life: 1.2 });
+        return true;
+    }
+    return false;
+}
+
+function damageObstacle(o, dmg, srcFacing) {
+    o.hp -= dmg;
+    o.hitFlash = 0.25;
+    spawnParticles(o.x, o.y, '#cccccc', 6);
+    sfx('hit_light');
+    if (o.hp <= 0) {
+        o.destroyed = true;
+        spawnParticles(o.x, o.y, '#fada30', 18);
+        sfx('hit_heavy');
+        floatingTexts.push({ x: o.x, y: o.y - 40, text: '+5 R', color: '#fada30', life: 1.0 });
+        player.runes += 5;
+    }
 }
 
 function updateFlagAttack(dt) {
@@ -1309,7 +1915,10 @@ function render() {
     if (gameState === STATE.TITLE) renderTitle();
     else if (gameState === STATE.CHAR_SELECT) renderCharSelect();
     else if (gameState === STATE.SHOP) renderShop();
-    else if (gameState === STATE.FIGHT) {
+    else if (gameState === STATE.STAGE) {
+        renderStage();
+        renderChatSidebar();
+    } else if (gameState === STATE.FIGHT) {
         renderFight();
         renderChatSidebar();
     } else if (gameState === STATE.WIN) renderWin();
@@ -1834,6 +2443,280 @@ function drawDJBooth() {
     ctx.fillText('DJ PLAN B', x + w / 2, y + h - 6);
 }
 
+function renderStage() {
+    // Background
+    if (IMAGES.background_arena.loaded) {
+        ctx.drawImage(IMAGES.background_arena.img, 0, 0, GW, H);
+    } else {
+        const grad = ctx.createLinearGradient(0, 0, 0, H);
+        grad.addColorStop(0, '#0a0202'); grad.addColorStop(0.5, '#3a0a08'); grad.addColorStop(1, '#0a0202');
+        ctx.fillStyle = grad; ctx.fillRect(0, 0, GW, H);
+    }
+    // Floor strip
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+    ctx.fillRect(0, FLOOR_Y, GW, H - FLOOR_Y);
+    ctx.fillStyle = '#3a1a18';
+    ctx.fillRect(0, FLOOR_Y, GW, 3);
+
+    // DJ booth bottom-left
+    drawDJBooth();
+
+    // Obstacles (behind enemies/player so they look like part of the scene)
+    obstacles.forEach(drawObstacle);
+    // Enemies
+    enemies.forEach(drawEnemy);
+    // Pickups
+    pickups.forEach(drawPickup);
+    // Projectiles
+    projectiles.forEach(drawProjectile);
+    // Player
+    drawFighter(player.fighter, player.data ? player.data.spriteKey : null, 'player');
+    // Particles
+    particles.forEach(p => {
+        ctx.fillStyle = p.color;
+        ctx.globalAlpha = Math.min(1, p.life * 2);
+        ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+        ctx.globalAlpha = 1;
+    });
+    // Floating texts
+    floatingTexts.forEach(t => {
+        ctx.fillStyle = t.color;
+        ctx.globalAlpha = Math.min(1, t.life * 1.5);
+        ctx.font = 'bold 22px Georgia';
+        ctx.textAlign = 'center';
+        ctx.shadowColor = '#000'; ctx.shadowBlur = 5;
+        ctx.fillText(t.text, t.x, t.y);
+        ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+    });
+
+    // HUD
+    drawStageHUD();
+
+    // GO arrow
+    if (stage.showGoArrow) {
+        const pulse = 0.6 + Math.sin(Date.now() / 200) * 0.4;
+        ctx.fillStyle = `rgba(250, 218, 48, ${pulse})`;
+        ctx.font = 'bold 36px Georgia';
+        ctx.textAlign = 'right';
+        ctx.shadowColor = '#000'; ctx.shadowBlur = 8;
+        const arrowX = GW - 40;
+        const arrowY = H / 2 - 40;
+        ctx.fillText('GO >>', arrowX, arrowY);
+        ctx.fillStyle = `rgba(255, 240, 200, ${pulse * 0.5})`;
+        ctx.font = '16px Georgia';
+        ctx.fillText(stage.wave < 4 ? `to wave ${stage.wave + 1}` : 'to EVIL BALD', arrowX, arrowY + 22);
+        ctx.shadowBlur = 0;
+    }
+
+    // Wave banner
+    if (stage.bannerTimer > 0) {
+        const a = Math.min(1, stage.bannerTimer / 0.4) * Math.min(1, (2.0 - stage.bannerTimer) / 0.3);
+        ctx.fillStyle = `rgba(0, 0, 0, ${a * 0.6})`;
+        ctx.fillRect(0, H / 2 - 70, GW, 100);
+        ctx.fillStyle = `rgba(255, 60, 40, ${a})`;
+        ctx.font = 'bold 64px Georgia';
+        ctx.textAlign = 'center';
+        ctx.shadowColor = '#000'; ctx.shadowBlur = 10;
+        ctx.fillText(stage.bannerText, GW / 2, H / 2);
+        ctx.shadowBlur = 0;
+    }
+
+    // Boss-door transition fade
+    if (stage.phase === 'transitioning') {
+        ctx.fillStyle = `rgba(0, 0, 0, ${stage.transitionAlpha})`;
+        ctx.fillRect(0, 0, GW, H);
+        ctx.fillStyle = `rgba(255, 60, 40, ${stage.transitionAlpha})`;
+        ctx.font = 'bold 56px Georgia';
+        ctx.textAlign = 'center';
+        ctx.shadowColor = '#000'; ctx.shadowBlur = 12;
+        ctx.fillText('EVIL BALD AWAITS', GW / 2, H / 2);
+        ctx.shadowBlur = 0;
+    }
+}
+
+function drawEnemy(e) {
+    if (!e.alive) return;
+    const img = IMAGES[e.spriteKey] && IMAGES[e.spriteKey].loaded ? IMAGES[e.spriteKey].img : null;
+    const bob = Math.abs(Math.sin(e.bobPhase)) * (e.state === 'walking' ? -5 : -1);
+    const drawScale = e.drawScale || 1.5;
+    const drawW = e.w * drawScale;
+    const drawH = e.h * drawScale;
+    ctx.save();
+    if (e.hitFlash > 0) ctx.filter = 'brightness(3) saturate(0.2)';
+    ctx.translate(e.x, e.y + bob);
+    const defaultFacing = e.spriteDefaultFacing || -1;
+    if (e.facing !== defaultFacing) ctx.scale(-1, 1);
+    if (img) {
+        ctx.drawImage(img, -drawW / 2, -drawH, drawW, drawH);
+    } else {
+        ctx.fillStyle = e.type === 'halo_grunt' ? '#3a6a4a' : '#aa5a40';
+        ctx.fillRect(-drawW / 2, -drawH, drawW, drawH);
+    }
+    ctx.restore();
+    // HP bar above
+    const barW = 50;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(e.x - barW / 2 - 1, e.y - e.h * 1.4 - 1, barW + 2, 6);
+    ctx.fillStyle = '#c41818';
+    ctx.fillRect(e.x - barW / 2, e.y - e.h * 1.4, barW * (e.hp / e.maxHp), 4);
+}
+
+function drawObstacle(o) {
+    if (o.destroyed) return;
+    if (!o.spawned) return;
+    if (o.kind === 'billboard') {
+        ctx.save();
+        ctx.translate(o.x, o.y);
+        ctx.rotate(o.rotation + (o.landed ? 0 : (o.vy / 800)));
+        // Frame
+        ctx.fillStyle = '#1a1014';
+        ctx.fillRect(-o.w / 2, -o.h / 2, o.w, o.h);
+        ctx.fillStyle = o.contentColor;
+        ctx.fillRect(-o.w / 2 + 8, -o.h / 2 + 16, o.w - 16, o.h - 30);
+        // Header strip (mimic instagram top bar)
+        ctx.fillStyle = '#0a0608';
+        ctx.fillRect(-o.w / 2, -o.h / 2, o.w, 14);
+        ctx.fillStyle = '#fff';
+        ctx.beginPath(); ctx.arc(-o.w / 2 + 10, -o.h / 2 + 7, 4, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#ccc';
+        ctx.fillRect(-o.w / 2 + 18, -o.h / 2 + 5, 40, 3);
+        // Content sprite if available
+        const imgKey = 'spam_' + o.contentType;
+        if (IMAGES[imgKey] && IMAGES[imgKey].loaded) {
+            const img = IMAGES[imgKey].img;
+            ctx.drawImage(img, -o.w / 2 + 14, -o.h / 2 + 22, o.w - 28, o.h - 46);
+        }
+        // Label at bottom
+        ctx.fillStyle = '#000';
+        ctx.fillRect(-o.w / 2, o.h / 2 - 16, o.w, 16);
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 11px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText(o.contentLabel, 0, o.h / 2 - 4);
+        // Hit flash
+        if (o.hitFlash > 0) {
+            ctx.fillStyle = `rgba(255, 255, 255, ${o.hitFlash * 2})`;
+            ctx.fillRect(-o.w / 2, -o.h / 2, o.w, o.h);
+        }
+        ctx.restore();
+        // HP bar if it has been hit
+        if (o.hp < 6 && o.landed) {
+            const barW = 60;
+            ctx.fillStyle = '#000';
+            ctx.fillRect(o.x - barW / 2 - 1, o.y - o.h / 2 - 12, barW + 2, 5);
+            ctx.fillStyle = '#c41818';
+            ctx.fillRect(o.x - barW / 2, o.y - o.h / 2 - 11, barW * (o.hp / 6), 3);
+        }
+    } else if (o.kind === 'tombstone') {
+        // y is feet/bottom of tombstone
+        ctx.save();
+        ctx.translate(o.x, o.y);
+        // Tombstone shape - rounded top rectangle
+        ctx.fillStyle = '#3a3a3a';
+        if (o.hitFlash > 0) ctx.fillStyle = '#888888';
+        ctx.beginPath();
+        ctx.moveTo(-o.w / 2, 0);
+        ctx.lineTo(-o.w / 2, -o.h + 25);
+        ctx.quadraticCurveTo(-o.w / 2, -o.h, -o.w / 2 + 25, -o.h);
+        ctx.lineTo(o.w / 2 - 25, -o.h);
+        ctx.quadraticCurveTo(o.w / 2, -o.h, o.w / 2, -o.h + 25);
+        ctx.lineTo(o.w / 2, 0);
+        ctx.closePath();
+        ctx.fill();
+        // Darker stripe inset
+        ctx.fillStyle = '#2a2a2a';
+        ctx.beginPath();
+        ctx.moveTo(-o.w / 2 + 6, 0);
+        ctx.lineTo(-o.w / 2 + 6, -o.h + 28);
+        ctx.quadraticCurveTo(-o.w / 2 + 6, -o.h + 6, -o.w / 2 + 28, -o.h + 6);
+        ctx.lineTo(o.w / 2 - 28, -o.h + 6);
+        ctx.quadraticCurveTo(o.w / 2 - 6, -o.h + 6, o.w / 2 - 6, -o.h + 28);
+        ctx.lineTo(o.w / 2 - 6, 0);
+        ctx.closePath();
+        ctx.fill();
+        // RIP text
+        ctx.fillStyle = '#888';
+        ctx.font = 'bold 16px Georgia';
+        ctx.textAlign = 'center';
+        ctx.fillText('R.I.P.', 0, -o.h + 32);
+        // Death cause text (wrapped)
+        ctx.fillStyle = '#cccccc';
+        ctx.font = '9px Georgia';
+        wrapText(o.deathText, 0, -o.h + 50, o.w - 14, 11);
+        // Mound at base
+        ctx.fillStyle = '#2a1a08';
+        ctx.beginPath();
+        ctx.ellipse(0, 0, o.w / 2 + 8, 6, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+        // HP bar
+        if (o.hp < 4 && o.risen) {
+            const barW = 50;
+            ctx.fillStyle = '#000';
+            ctx.fillRect(o.x - barW / 2 - 1, o.y - o.h - 12, barW + 2, 5);
+            ctx.fillStyle = '#c41818';
+            ctx.fillRect(o.x - barW / 2, o.y - o.h - 11, barW * (o.hp / 4), 3);
+        }
+    }
+}
+
+function drawPickup(p) {
+    const bob = Math.sin(p.bobPhase) * 6;
+    ctx.save();
+    ctx.translate(p.x, p.y + bob);
+    // Glow
+    ctx.shadowColor = p.type === 'heal' ? '#5aff5a' : '#fada30';
+    ctx.shadowBlur = 18;
+    // Shape
+    if (p.type === 'heal') {
+        // Red cross flask
+        ctx.fillStyle = '#c41818';
+        ctx.fillRect(-12, -16, 24, 32);
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(-3, -10, 6, 20);
+        ctx.fillRect(-10, -3, 20, 6);
+    } else {
+        // Gold gauntlet / fist
+        ctx.fillStyle = '#fada30';
+        ctx.fillRect(-14, -14, 28, 28);
+        ctx.strokeStyle = '#aa7800'; ctx.lineWidth = 2;
+        ctx.strokeRect(-14, -14, 28, 28);
+        ctx.fillStyle = '#000';
+        ctx.font = 'bold 18px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('!', 0, 6);
+    }
+    ctx.shadowBlur = 0;
+    ctx.restore();
+}
+
+function drawStageHUD() {
+    // Player HP bar top-left
+    drawHPBar(40, 30, 340, 28, player.fighter.hp, player.fighter.maxHp, '#5aafff', player.data.name);
+    ctx.fillStyle = '#fada30';
+    ctx.font = 'bold 14px Georgia';
+    ctx.textAlign = 'left';
+    ctx.fillText(`SPECIAL (L): ${player.specialCharges}`, 40, 80);
+    ctx.fillStyle = '#5aff5a';
+    ctx.fillText(`FLASKS (H): ${player.flasks}`, 200, 80);
+    ctx.fillStyle = '#fada30';
+    ctx.fillText(`Runes: ${player.runes}`, 360, 80);
+    // Wave indicator top-right of game area
+    ctx.fillStyle = '#d4af37';
+    ctx.font = 'bold 20px Georgia';
+    ctx.textAlign = 'right';
+    ctx.fillText(`WAVE ${stage.wave} / 4`, GW - 20, 32);
+    // Enemies remaining
+    const alive = enemies.filter(e => e.alive).length;
+    const active = obstacles.filter(o => !o.destroyed && !o.passed && o.spawned).length;
+    const enemiesLeft = alive + active;
+    if (stage.phase === 'wave_active') {
+        ctx.fillStyle = '#bbbbbb';
+        ctx.font = '15px Georgia';
+        ctx.fillText(`Threats remaining: ${enemiesLeft}`, GW - 20, 56);
+    }
+}
+
 function drawFlagAttack() {
     if (!flagAttack) return;
     const F = flagAttack;
@@ -2116,3 +2999,35 @@ window.addEventListener('keydown', e => {
     }
 });
 requestAnimationFrame(loop);
+
+// =====================================================================
+// TOUCH CONTROLS - auto-shown on touch devices
+// =====================================================================
+(function setupTouchControls() {
+    const isTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0 ||
+                    window.matchMedia('(pointer: coarse)').matches;
+    if (!isTouch) return;
+    const tc = document.getElementById('touch-controls');
+    if (tc) tc.classList.remove('hidden');
+    document.querySelectorAll('.tbtn').forEach(btn => {
+        const code = btn.dataset.key;
+        if (!code) return;
+        const down = e => {
+            if (e.cancelable) e.preventDefault();
+            initAudio();
+            if (!keys[code]) handleInputDown(code);
+            keys[code] = true;
+        };
+        const up = e => {
+            if (e.cancelable) e.preventDefault();
+            keys[code] = false;
+        };
+        btn.addEventListener('touchstart', down, { passive: false });
+        btn.addEventListener('touchend', up, { passive: false });
+        btn.addEventListener('touchcancel', up, { passive: false });
+        btn.addEventListener('mousedown', down);
+        btn.addEventListener('mouseup', up);
+        btn.addEventListener('mouseleave', up);
+    });
+    document.addEventListener('contextmenu', e => e.preventDefault());
+})();

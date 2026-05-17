@@ -2,19 +2,51 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
     <title>Baldin' Ring</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div id="game-container">
         <canvas id="game" width="1280" height="720"></canvas>
+
+        <!-- Touch controls (auto-shown on touch devices) -->
+        <div id="touch-controls" class="hidden">
+            <!-- Left side: D-pad -->
+            <div class="touch-dpad">
+                <button class="tbtn" data-key="ArrowLeft">&#9664;</button>
+                <button class="tbtn" data-key="ArrowRight">&#9654;</button>
+                <button class="tbtn down" data-key="KeyS">&#9660;</button>
+            </div>
+            <!-- Right side: Action buttons -->
+            <div class="touch-actions">
+                <button class="tbtn jump" data-key="Space">JUMP</button>
+                <button class="tbtn light" data-key="KeyJ">J</button>
+                <button class="tbtn heavy" data-key="KeyK">K</button>
+                <button class="tbtn ult" data-key="KeyL">L</button>
+                <button class="tbtn heal" data-key="KeyH">HEAL</button>
+            </div>
+            <!-- Top-right confirm for menus -->
+            <div class="touch-menu">
+                <button class="tbtn confirm" data-key="Space">START / CONFIRM</button>
+                <button class="tbtn slot" data-key="Digit1">1</button>
+                <button class="tbtn slot" data-key="Digit2">2</button>
+                <button class="tbtn slot" data-key="Digit3">3</button>
+                <button class="tbtn slot" data-key="Digit4">4</button>
+                <button class="tbtn slot" data-key="Digit5">5</button>
+            </div>
+        </div>
+
         <div id="controls-help">
             <strong>A / D</strong> Walk (back = Block) &nbsp;|&nbsp;
             <strong>W / SPACE</strong> Jump &nbsp;|&nbsp;
             <strong>S</strong> Crouch &nbsp;|&nbsp;
             <strong>J</strong> Light &nbsp;|&nbsp;
-            <strong>K</strong> Heavy &nbsp;|&nbsp;
-            <strong>L</strong> Special &nbsp;|&nbsp;
+            <strong>K</strong> Signature &nbsp;|&nbsp;
+            <strong>L</strong> Ultimate &nbsp;|&nbsp;
             <strong>H</strong> Heal
         </div>
     </div>
