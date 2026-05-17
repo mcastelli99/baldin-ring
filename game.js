@@ -86,6 +86,8 @@ function addHitStop(duration) {
 // =====================================================================
 // CHARACTERS (fighting game stats)
 // =====================================================================
+// spriteDefaultFacing: which direction the source PNG visually faces (-1 left, 1 right).
+// Used by drawFighter so we only flip the sprite when its natural facing differs from f.facing.
 const CHARACTERS = {
     ladder_man: {
         name: "LADDER MAN",
@@ -93,13 +95,13 @@ const CHARACTERS = {
         maxHp: 100,
         walkSpeed: 220,
         jumpPower: 750,
-        // Attacks (startup, active, recovery in seconds; damage, knockback in px/sec)
         light: { startup: 0.08, active: 0.10, recovery: 0.20, damage: 7,  knockback: 200, range: 90, height: 70 },
         heavy: { startup: 0.22, active: 0.14, recovery: 0.40, damage: 16, knockback: 380, range: 130, height: 100 },
         specialName: "LADDER SWING",
         specialDesc: "Wide swing. Hits both sides. Knocks boss across screen.",
         special: { startup: 0.30, active: 0.30, recovery: 0.55, damage: 24, knockback: 500, range: 160, height: 140, both: true },
         spriteKey: 'ladder_man_sprite',
+        spriteDefaultFacing: 1,   // source has ladder over right shoulder = faces RIGHT
         scale: 1.5
     },
     generic_white: {
@@ -114,6 +116,7 @@ const CHARACTERS = {
         specialDesc: "Brief invuln. If hit during, automatic counter-slash for huge damage.",
         special: { startup: 0.05, active: 0.50, recovery: 0.40, damage: 30, knockback: 450, range: 130, height: 110, counter: true },
         spriteKey: 'generic_white_sprite',
+        spriteDefaultFacing: -1,  // sword on viewer's left = faces LEFT
         scale: 1.5
     },
     slug: {
@@ -128,6 +131,7 @@ const CHARACTERS = {
         specialDesc: "Throws 3 gold tickets in a spread. Ranged projectiles.",
         special: { startup: 0.18, active: 0.05, recovery: 0.40, damage: 12, knockback: 200, range: 0, height: 0, projectile: 'tickets' },
         spriteKey: 'slug_sprite',
+        spriteDefaultFacing: -1,  // cards on viewer's left = faces LEFT
         scale: 1.5
     }
 };
@@ -194,6 +198,7 @@ const BOSS_DATA = {
     maxHp: 180,
     walkSpeed: 130,
     jumpPower: 760,
+    spriteDefaultFacing: -1,  // Evil Bald source is symmetric, treat as left-default like the rest
     // Boss attacks
     jab:        { startup: 0.18, active: 0.10, recovery: 0.30, damage: 8,  knockback: 220, range: 110, height: 100, name: 'jab' },
     haloSlash:  { startup: 0.30, active: 0.20, recovery: 0.55, damage: 18, knockback: 380, range: 180, height: 110, name: 'haloSlash', advance: 260 },
@@ -1385,9 +1390,11 @@ function drawFighter(f, spriteKey, who) {
     // Pivot at feet for rotation. Apply walking lean + hit lean + attack tilt all together.
     ctx.translate(f.x + lungeX, f.y + bob);
     ctx.rotate(f.leanAngle + walkLean);
-    // Source sprites are drawn facing slightly LEFT by default (subjects hold items in right hand,
-    // showing on viewer's left). So flip when facing RIGHT (positive direction), not when facing left.
-    if (f.facing > 0) ctx.scale(-1, 1);
+    // Per-character flip: each source sprite has its own default orientation (Nano Banana doesn't
+    // generate consistent left/right poses). spriteDefaultFacing in the data declares where the
+    // source naturally points; flip only when target facing differs.
+    const defaultFacing = (f.data && f.data.spriteDefaultFacing) || -1;
+    if (f.facing !== defaultFacing) ctx.scale(-1, 1);
 
     if (img) {
         ctx.drawImage(img, -drawW/2, -drawH, drawW, drawH);
