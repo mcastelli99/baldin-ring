@@ -400,10 +400,10 @@ const AGGROCRAIG_POISON_LINES = [
 const AGGROCRAIG_JETS_LINES = [
     "The Jets are signing TUA",
     "Aaron Rodgers is COMING BACK",
-    "Sauce Gardner is HIM",
     "The Jets are SUPER BOWL bound",
     "JETS JETS JETS",
-    "THIS is the year"
+    "THIS is the year",
+    "Wait til you see the DRAFT"
 ];
 
 // Stage progression state
