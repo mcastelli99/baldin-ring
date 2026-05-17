@@ -97,7 +97,9 @@ const CHARACTERS = {
         walkSpeed: 220,
         jumpPower: 750,
         light: { startup: 0.08, active: 0.10, recovery: 0.20, damage: 7,  knockback: 200, range: 90, height: 70 },
-        heavy: { startup: 0.22, active: 0.14, recovery: 0.40, damage: 16, knockback: 380, range: 130, height: 100 },
+        // HEAVY = Ladder Swing: wide arc that hits BOTH sides
+        heavy: { startup: 0.28, active: 0.25, recovery: 0.50, damage: 22, knockback: 480, range: 170, height: 140, both: true },
+        heavyName: "LADDER SWING",
         specialName: "??? BARRAGE",
         specialDesc: "Hurls 3 giant question marks at the boss. Confusion damage.",
         special: { startup: 0.25, active: 0.10, recovery: 0.40, damage: 0, knockback: 0, range: 0, height: 0, projectile: 'questions' },
@@ -114,7 +116,9 @@ const CHARACTERS = {
         walkSpeed: 200,
         jumpPower: 760,
         light: { startup: 0.06, active: 0.10, recovery: 0.18, damage: 6,  knockback: 180, range: 80, height: 90 },
-        heavy: { startup: 0.18, active: 0.12, recovery: 0.35, damage: 14, knockback: 350, range: 110, height: 100 },
+        // HEAVY = Shield Counter: brief invuln window. If boss hits during it -> auto counter for big damage.
+        heavy: { startup: 0.10, active: 0.45, recovery: 0.40, damage: 14, knockback: 350, range: 105, height: 110, counter: true },
+        heavyName: "SHIELD COUNTER",
         specialName: "PUERTO RICAN PRIDE",
         specialDesc: "Unfurls a giant PR flag that sweeps the boss. Massive damage + knockback.",
         special: { startup: 0.30, active: 0.10, recovery: 0.45, damage: 0, knockback: 0, range: 0, height: 0, projectile: 'flag' },
@@ -131,7 +135,9 @@ const CHARACTERS = {
         walkSpeed: 210,
         jumpPower: 720,
         light: { startup: 0.07, active: 0.09, recovery: 0.16, damage: 5,  knockback: 170, range: 75, height: 80 },
-        heavy: { startup: 0.20, active: 0.12, recovery: 0.32, damage: 12, knockback: 330, range: 100, height: 95 },
+        // HEAVY = UFC Ticket Fan: throws 3 gold tickets in a spread (pure projectile, no melee)
+        heavy: { startup: 0.22, active: 0.10, recovery: 0.40, damage: 0, knockback: 0, range: 0, height: 0, projectile: 'tickets' },
+        heavyName: "UFC TICKET FAN",
         specialName: "WAITER SERVICE",
         specialDesc: "Summons 2 pompous waiters who march in and serve platter strikes.",
         special: { startup: 0.30, active: 0.10, recovery: 0.40, damage: 0, knockback: 0, range: 0, height: 0, projectile: 'waiters' },
@@ -367,7 +373,7 @@ function handleInputDown(code) {
         if (!canAct(f)) return;
         if (code === 'KeyW' || code === 'ArrowUp' || code === 'Space') tryJump(f);
         if (code === 'KeyJ') startAttack(f, 'light', player.data.light);
-        if (code === 'KeyK') startAttack(f, 'heavy', player.data.heavy);
+        if (code === 'KeyK') tryHeavy();
         if (code === 'KeyL') trySpecial();
         if (code === 'KeyH' && player.flasks > 0 && f.hp < f.maxHp) { useFlask(); }
         return;
@@ -450,6 +456,44 @@ function startAttack(f, type, attackData) {
     f.attackTimer = attackData.startup;
     f.hasHitThisAttack = false;
     if (type === 'heavy') sfx('whiff');
+}
+
+// Heavy attack with character-specific behavior (the old per-character signature moves)
+function tryHeavy() {
+    const f = player.fighter;
+    if (!canAct(f)) return;
+    startAttack(f, 'heavy', player.data.heavy);
+    const startupMs = player.data.heavy.startup * 1000;
+    const myType = 'heavy';
+
+    if (player.charKey === 'slug') {
+        // UFC Ticket Fan - 3 gold tickets in a spread
+        setTimeout(() => {
+            if (gameState !== STATE.FIGHT || f.attackType !== myType) return;
+            const baseX = f.x + f.facing * 40;
+            const baseY = f.y - f.h / 2;
+            for (let i = -1; i <= 1; i++) {
+                projectiles.push({
+                    type: 'ticket',
+                    x: baseX, y: baseY,
+                    vx: f.facing * 550,
+                    vy: i * 180,
+                    damage: 12,
+                    owner: 'player',
+                    life: 2.0,
+                    spin: 0
+                });
+            }
+            sfx('parry');
+        }, startupMs);
+        floatingTexts.push({ x: f.x, y: f.y - 200, text: 'UFC TICKETS', color: '#fada30', life: 1.0 });
+    } else if (player.charKey === 'generic_white') {
+        // Shield Counter - announce that parry is active so player knows to bait the boss
+        floatingTexts.push({ x: f.x, y: f.y - 200, text: 'SHIELD UP!', color: '#d4af37', life: 0.9 });
+    } else if (player.charKey === 'ladder_man') {
+        // Wide Ladder Swing - announce the move
+        floatingTexts.push({ x: f.x, y: f.y - 200, text: 'LADDER SWING', color: '#3a8a4a', life: 0.9 });
+    }
 }
 
 function trySpecial() {
@@ -661,8 +705,8 @@ function updateFighter(f, dt, isBoss) {
                         size: 3 + Math.random() * 3
                     });
                 }
-                // Special: handle counter setup
-                if (f.attackType === 'special' && f.attackData.counter) {
+                // Counter setup - invuln during active for ANY counter-flagged attack (heavy or special)
+                if (f.attackData.counter) {
                     f.invuln = f.attackData.active;
                 }
             } else if (f.attackPhase === 'active') {
@@ -760,21 +804,18 @@ function updateFighter(f, dt, isBoss) {
 
 function checkAttackHit(attacker, defender, isBoss) {
     const range = attacker.attackData.range;
-    const height = attacker.attackData.height;
-    const reachX = attacker.x + attacker.facing * range / 2;
-    // Hitbox
-    const hbX = attacker.x + attacker.facing * 30;
-    const hbW = range;
-    const hbY = attacker.y - attacker.h + 20;
-    const hbH = height;
-    // Defender rect
-    const dX = defender.x - defender.w/2;
-    const dY = defender.y - defender.h;
-    // Overlap check
-    const overlap = Math.abs((attacker.x + attacker.facing * range/2 + 30) - defender.x) < range/2 + defender.w/2 + 20;
-    if (!overlap) return;
+    if (!range) return;  // pure-projectile attacks (Slug heavy, all specials) skip melee check
+    // Front overlap
+    const frontX = attacker.x + attacker.facing * range / 2 + 30;
+    const frontOverlap = Math.abs(frontX - defender.x) < range / 2 + defender.w / 2 + 20;
+    // Back overlap (only for 'both: true' attacks like Ladder Swing)
+    let backOverlap = false;
+    if (attacker.attackData.both) {
+        const backX = attacker.x - attacker.facing * range / 2 - 30;
+        backOverlap = Math.abs(backX - defender.x) < range / 2 + defender.w / 2 + 20;
+    }
+    if (!frontOverlap && !backOverlap) return;
 
-    // Generic White special: counter trigger handled in onHit; here just deal normal damage
     attacker.hasHitThisAttack = true;
     onHit(attacker, defender, attacker.attackData, isBoss);
 }
@@ -1295,8 +1336,8 @@ function renderTitle() {
         ['S',         'Crouch (avoids high attacks)'],
         ['W / SPACE', 'Jump'],
         ['J',         'Light attack (fast, low damage)'],
-        ['K',         'Heavy attack (slow, high damage)'],
-        ['L',         'Special move (3 charges)'],
+        ['K',         'Heavy attack = your CHARACTER SIGNATURE move'],
+        ['L',         'ULTIMATE special (3 charges)'],
         ['H',         'Drink healing flask']
     ];
     const blockY = 280;
@@ -1371,17 +1412,25 @@ function renderCharSelect() {
             ctx.fillText(s[1], x + 110, 465 + j * 20);
         });
         ctx.textAlign = 'center';
+        // Heavy signature move
         ctx.fillStyle = '#d4af37';
-        ctx.font = 'bold 13px Georgia';
-        ctx.fillText('SPECIAL (L)', x, 545);
+        ctx.font = 'bold 12px Georgia';
+        ctx.fillText('HEAVY (K)', x, 530);
         ctx.fillStyle = '#fff';
-        ctx.font = 'bold 14px Georgia';
-        ctx.fillText(d.specialName, x, 563);
+        ctx.font = 'bold 13px Georgia';
+        ctx.fillText(d.heavyName, x, 547);
+        // Ultimate special
+        ctx.fillStyle = '#fada30';
+        ctx.font = 'bold 12px Georgia';
+        ctx.fillText('ULTIMATE (L)', x, 575);
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 13px Georgia';
+        ctx.fillText(d.specialName, x, 592);
         ctx.fillStyle = '#bbbbbb';
-        ctx.font = '12px Georgia';
-        wrapText(d.specialDesc, x, 585, 260, 14);
+        ctx.font = '11px Georgia';
+        wrapText(d.specialDesc, x, 608, 270, 12);
         ctx.fillStyle = '#d4af37';
-        ctx.font = 'bold 30px Georgia';
+        ctx.font = 'bold 28px Georgia';
         ctx.fillText(`[${c.key}]`, x, 655);
     });
     ctx.fillStyle = '#8a6a28';
