@@ -699,6 +699,19 @@ function startBossFight() {
     gameState = STATE.FIGHT;
 }
 
+// Painted figurine projectile types - Evil Bald is also a Warhammer/figurine painter on the side.
+// Each figurine is a different IP character: Halo Master Chief, Marvel heroes, etc.
+const FIGURINE_TYPES = [
+    { name: 'MASTER CHIEF',    body: '#2a4a2a', accent: '#fa7800', ip: 'HALO' },
+    { name: 'ARBITER',         body: '#5a5a5a', accent: '#3aa8a8', ip: 'HALO' },
+    { name: 'IRON MAN',        body: '#aa1010', accent: '#fada30', ip: 'MARVEL' },
+    { name: 'HULK',            body: '#2a8a2a', accent: '#5a2a8a', ip: 'MARVEL' },
+    { name: 'THOR',            body: '#5a1818', accent: '#cccccc', ip: 'MARVEL' },
+    { name: 'SPIDER-MAN',      body: '#c41818', accent: '#1a3aaa', ip: 'MARVEL' },
+    { name: 'CAPTAIN AMERICA', body: '#1a3aaa', accent: '#fff',    ip: 'MARVEL' },
+    { name: 'WOLVERINE',       body: '#fada30', accent: '#1a3a1a', ip: 'MARVEL' }
+];
+
 // MtG creature card templates - each one has its own stats + behavior
 const MTG_CREATURE_TYPES = [
     { name: 'LIGHTNING BOLT',  color: '#c41818', hp: 4,  damage: 6,  speed: 200, ai: 'ranged_zap',  bossDmgOnKill: 14 },
@@ -727,11 +740,36 @@ function triggerEvilBaldRevive() {
     boss.hoverY = FLOOR_Y - 380;    // floating position high above the arena
     boss.fighter.y = boss.hoverY;
     boss.cardSpawnTimer = 1.5;      // first creature appears after the banner
+    boss.figurineTimer = 3.5;       // first figurine throw after the creatures get rolling
+    boss.painting = null;           // {type, timer} during the paint cinematic before throw
     boss.cards = [];                // active MtG creatures
     addShake(20, 1.2);
     sfx('parry');
     chatPush('sys', '!! HE IS NOT DONE !!');
     chatPush('bald', 'one more thing');
+}
+
+// Throw a painted figurine in an arc toward the player
+function throwFigurine(t) {
+    const px = player.fighter.x;
+    const py = player.fighter.y - 60;
+    const startX = boss.fighter.x;
+    const startY = boss.fighter.y + 20;
+    const dxToPlayer = px - startX;
+    // Arc trajectory: enough vy for gravity to bring it down on the player
+    projectiles.push({
+        type: 'figurine',
+        x: startX, y: startY,
+        vx: dxToPlayer * 0.55,
+        vy: -260,
+        damage: 11,
+        owner: 'boss',
+        life: 4.0,
+        spin: 0,
+        figurine: t
+    });
+    sfx('whiff');
+    floatingTexts.push({ x: startX, y: startY - 30, text: `THROW ${t.name}`, color: '#fada30', life: 1.0 });
 }
 
 function spawnMtgCreature() {
@@ -1533,7 +1571,22 @@ function updateBossAI(dt) {
             spawnMtgCreature();
             boss.cardSpawnTimer = 1.4 + Math.random() * 1.0;
         }
-        // Boss face the player
+        // Painted figurine throws - Evil Bald is also a tabletop / figurine painter
+        if (boss.painting) {
+            boss.painting.timer -= dt;
+            if (boss.painting.timer <= 0) {
+                throwFigurine(boss.painting.type);
+                boss.painting = null;
+                boss.figurineTimer = 3.5 + Math.random() * 2.0;
+            }
+        } else {
+            boss.figurineTimer -= dt;
+            if (boss.figurineTimer <= 0) {
+                const t = FIGURINE_TYPES[Math.floor(Math.random() * FIGURINE_TYPES.length)];
+                boss.painting = { type: t, timer: 0.8 };
+                chatPush('sys', `Evil Bald: just finished my ${t.name}`);
+            }
+        }
         f.facing = player.fighter.x > f.x ? 1 : -1;
         return;
     }
@@ -2900,6 +2953,8 @@ function renderFight() {
     drawFighter(boss.fighter, 'evil_bald_sprite', 'boss');
     // Cloak overlay (after revival)
     if (boss.cloaked) drawBossCloak();
+    // Painting figurine in hand (revive phase tell before the throw)
+    if (boss.painting) drawBossPainting();
     // MtG cards (rendered in front of boss so they look like a ward)
     if (boss.cards && boss.cards.length > 0) drawBossCards();
     // Player
@@ -3140,6 +3195,43 @@ function drawProjectile(p) {
         ctx.beginPath(); ctx.arc(-7, 2, 12, 0, Math.PI * 2); ctx.fill();
         ctx.shadowBlur = 0;
         ctx.restore();
+        return;
+    }
+    if (p.type === 'figurine') {
+        const t = p.figurine;
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.spin);
+        // Base plate (Warhammer-style)
+        ctx.fillStyle = '#3a2a18';
+        ctx.beginPath(); ctx.ellipse(0, 12, 14, 3, 0, 0, Math.PI * 2); ctx.fill();
+        // Body
+        ctx.fillStyle = t.body;
+        ctx.fillRect(-9, -4, 18, 16);
+        // Arms hanging at sides
+        ctx.fillRect(-13, -2, 4, 10);
+        ctx.fillRect(9, -2, 4, 10);
+        // Head/helmet
+        ctx.fillStyle = t.accent;
+        ctx.fillRect(-7, -16, 14, 12);
+        // Eye/visor stripe
+        ctx.fillStyle = '#000';
+        ctx.fillRect(-6, -10, 12, 3);
+        // Legs
+        ctx.fillStyle = '#1a1a1a';
+        ctx.fillRect(-7, 12, 5, 4);
+        ctx.fillRect(2, 12, 5, 4);
+        ctx.restore();
+        // Label below
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 9px Arial';
+        ctx.textAlign = 'center';
+        ctx.shadowColor = '#000'; ctx.shadowBlur = 4;
+        ctx.fillText(t.name, p.x, p.y + 26);
+        ctx.fillStyle = '#fada30';
+        ctx.font = 'bold 7px Arial';
+        ctx.fillText(`(${t.ip})`, p.x, p.y + 35);
+        ctx.shadowBlur = 0;
         return;
     }
     if (p.type === 'zap') {
@@ -3848,6 +3940,47 @@ function drawWaiter(w) {
         ctx.arc(w.x + w.facing * 28, w.y - 130, 18, 0, Math.PI * 2);
         ctx.fill();
     }
+}
+
+function drawBossPainting() {
+    if (!boss.painting) return;
+    const t = boss.painting.type;
+    const handX = boss.fighter.x + boss.fighter.facing * 60;
+    const handY = boss.fighter.y - 40;
+    // Tiny figurine being held in hand
+    ctx.save();
+    ctx.translate(handX, handY);
+    ctx.fillStyle = '#3a2a18';
+    ctx.beginPath(); ctx.ellipse(0, 12, 11, 2, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = t.body;
+    ctx.fillRect(-7, -4, 14, 12);
+    ctx.fillStyle = t.accent;
+    ctx.fillRect(-5, -12, 10, 10);
+    ctx.fillStyle = '#000';
+    ctx.fillRect(-4, -8, 8, 2);
+    ctx.restore();
+    // Paintbrush in his other hand
+    ctx.strokeStyle = '#8a4818';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(handX + boss.fighter.facing * 14, handY - 10);
+    ctx.lineTo(handX + boss.fighter.facing * 22, handY - 2);
+    ctx.stroke();
+    ctx.fillStyle = t.accent;
+    ctx.beginPath(); ctx.arc(handX + boss.fighter.facing * 14, handY - 10, 2.5, 0, Math.PI * 2); ctx.fill();
+    // Paint motion strokes (animated)
+    const strokeT = (Date.now() / 80) % 1;
+    ctx.fillStyle = `rgba(255, 200, 60, ${1 - strokeT})`;
+    for (let i = 0; i < 3; i++) {
+        ctx.fillRect(handX - 6 + i * 5, handY - 16 - strokeT * 8, 2, 4);
+    }
+    // "painting..." label
+    ctx.fillStyle = '#fada30';
+    ctx.font = 'italic 13px Georgia';
+    ctx.textAlign = 'center';
+    ctx.shadowColor = '#000'; ctx.shadowBlur = 4;
+    ctx.fillText(`painting his ${t.name}...`, boss.fighter.x, boss.fighter.y - 220);
+    ctx.shadowBlur = 0;
 }
 
 function drawBossCloak() {
