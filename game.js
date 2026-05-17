@@ -206,10 +206,14 @@ const player = {
 const boss = {
     data: null,
     fighter: null,
-    aiTimer: 1.5,           // before next decision
-    aiAction: null,         // current action plan
+    aiTimer: 1.5,
+    aiAction: null,
     phase: 1,
-    nextSpamType: null
+    nextSpamType: null,
+    revived: false,          // becomes true after phase 1 defeat -> cloaked phase 3 begins
+    reviveTimer: 0,          // counts down during the revive cinematic
+    cloaked: false,          // when true, draw the cloak overlay on the boss sprite
+    cards: []                // floating MtG cards that block damage until destroyed
 };
 
 const BOSS_DATA = {
@@ -256,13 +260,13 @@ const ENEMY_TYPES = {
     spartan: {
         spriteKey: 'spartan_enemy',
         w: 80, h: 160, drawScale: 1.45, spriteDefaultFacing: 1,
-        hp: 22,                 // 4 light hits to drop
-        damage: 3,              // per bullet (3-burst = 9 max damage instead of 21)
+        hp: 44,                 // doubled - real mini-boss durability
+        damage: 3,
         speed: 90,
         attackRange: 0,
-        attackCooldown: 2.6,    // longer breathing room between bursts
+        attackCooldown: 2.6,
         ai: 'spartan_rifle',
-        runeReward: 14,
+        runeReward: 22,
         miniboss: true,
         title: 'SPARTAN',
         subtitle: 'Battle Rifle'
@@ -677,6 +681,10 @@ function startBossFight() {
     boss.aiAction = null;
     boss.phase = 1;
     boss.attackToken = 0;
+    boss.revived = false;
+    boss.cloaked = false;
+    boss.reviveTimer = 0;
+    boss.cards = [];
     player.fighter.x = 300;
     player.fighter.vx = 0;
     player.fighter.vy = 0;
@@ -689,6 +697,43 @@ function startBossFight() {
     chatPush('sys', '!! EVIL BALD APPEARS !!');
     chatPush('bald', 'finally');
     gameState = STATE.FIGHT;
+}
+
+// Revival sequence - after player defeats Evil Bald in phase 1, he revives cloaked + summons MtG cards
+function triggerEvilBaldRevive() {
+    boss.revived = true;
+    boss.cloaked = true;
+    boss.reviveTimer = 2.4;     // cinematic banner duration
+    boss.phase = 3;
+    boss.fighter.hp = 110;
+    boss.fighter.maxHp = 110;
+    boss.fighter.state = 'idle';
+    boss.fighter.hitTimer = 0;
+    boss.fighter.attackPhase = 'none';
+    boss.attackToken = (boss.attackToken || 0) + 1;
+    addShake(20, 1.2);
+    sfx('parry');
+    chatPush('sys', '!! HE IS NOT DONE !!');
+    chatPush('bald', 'one more thing');
+    // Spawn 4 MtG cards on the ground between player and boss (so they block the path)
+    const cx = boss.fighter.x;
+    const cardNames = ['LIGHTNING BOLT', 'COUNTERSPELL', 'SOL RING', 'BLACK LOTUS'];
+    const cardColors = ['#c41818', '#3a5aff', '#aa7800', '#1a1a1a'];
+    boss.cards = [];
+    for (let i = 0; i < 4; i++) {
+        boss.cards.push({
+            x: cx - 250 + i * 80,
+            y: FLOOR_Y,                  // feet position (cards stand on ground like obstacles)
+            w: 70, h: 130,
+            hp: 10,
+            maxHp: 10,
+            name: cardNames[i],
+            color: cardColors[i],
+            bobPhase: i * 0.8,
+            hitFlash: 0,
+            destroyed: false
+        });
+    }
 }
 
 // =====================================================================
@@ -1058,9 +1103,11 @@ function update(dt) {
     }
 
     // STATE.FIGHT (existing boss fight)
+    if (boss.reviveTimer > 0) boss.reviveTimer -= dt;
     updateFighter(player.fighter, dt, false);
     updateFighter(boss.fighter, dt, true);
     updateBossAI(dt);
+    updateBossCards(dt);
     updateProjectiles(dt);
     updateAOE(dt);
     updateParticles(dt);
@@ -1073,13 +1120,19 @@ function update(dt) {
     // win/lose check
     if (boss.fighter.hp <= 0 && gameState === STATE.FIGHT) {
         boss.fighter.hp = 0;
-        addShake(20, 1.0);
-        sfx('ko');
-        sfx('win');
-        chatPush('bald', 'rude');
-        chatPush('sys', 'Evil Bald is offline');
-        stopBossMusic();
-        setTimeout(() => { if (gameState === STATE.FIGHT) gameState = STATE.WIN; }, 600);
+        // First defeat -> revive cloaked + summon MtG cards before round 2
+        if (!boss.revived) {
+            triggerEvilBaldRevive();
+        } else {
+            // Final defeat
+            addShake(20, 1.0);
+            sfx('ko');
+            sfx('win');
+            chatPush('bald', 'rude');
+            chatPush('sys', 'Evil Bald is offline FOR GOOD');
+            stopBossMusic();
+            setTimeout(() => { if (gameState === STATE.FIGHT) gameState = STATE.WIN; }, 600);
+        }
     }
     if (player.fighter.hp <= 0 && gameState === STATE.FIGHT) {
         player.fighter.hp = 0;
@@ -1308,7 +1361,16 @@ function updateFighter(f, dt, isBoss) {
 
 function checkAttackHit(attacker, defender, isBoss) {
     const range = attacker.attackData.range;
-    if (!range) return;  // pure-projectile attacks (Slug heavy, all specials) skip melee check
+    if (!range) return;
+    // If player is attacking and boss has MtG cards up, route the hit to a card first.
+    if (!isBoss && boss.cards && boss.cards.filter(c => !c.destroyed).length > 0) {
+        const hitX = attacker.x + attacker.facing * (range / 2 + 30);
+        const hitY = attacker.y - attacker.h * 0.5;
+        if (tryHitBossCard(hitX, hitY, (attacker.attackData.damage || 0) * (player.dmgMult || 1), attacker.facing)) {
+            attacker.hasHitThisAttack = true;
+            return;
+        }
+    }
     // Front overlap
     const frontX = attacker.x + attacker.facing * range / 2 + 30;
     const frontOverlap = Math.abs(frontX - defender.x) < range / 2 + defender.w / 2 + 20;
@@ -1333,19 +1395,26 @@ function onHit(attacker, defender, attackData, attackerIsBoss) {
         if (defender === player.fighter && player.fighter.state === 'attacking' && player.fighter.attackData?.counter) {
             // Boss hit player during counter - counter activates!
             const counterDmg = 30;
-            boss.fighter.hp -= counterDmg;
-            boss.fighter.hitTimer = 0.5;
-            boss.fighter.vx = -player.fighter.facing * 350;
-            boss.fighter.vy = -400;
-            boss.fighter.onGround = false;
-            boss.fighter.hitFlash = 0.3;
-            addShake(15, 0.3);
-            addHitStop(0.15);
-            sfx('hit_heavy');
-            spawnParticles(boss.fighter.x, boss.fighter.y - boss.fighter.h/2, '#fada30', 16);
-            floatingTexts.push({ x: boss.fighter.x, y: boss.fighter.y - 180, text: 'COUNTER!', color: '#fada30', life: 1.3 });
-            floatingTexts.push({ x: boss.fighter.x, y: boss.fighter.y - 160, text: `-${counterDmg}`, color: '#ff5a5a', life: 1.0 });
-            chatPush('sys', 'COUNTER on Evil Bald');
+            const cardsUp = boss.cards && boss.cards.filter(c => !c.destroyed).length > 0;
+            if (cardsUp) {
+                // Cards ward absorbs the counter - destroy nearest card instead
+                tryHitBossCard(boss.fighter.x, boss.fighter.y - boss.fighter.h * 0.5, counterDmg, -player.fighter.facing);
+                floatingTexts.push({ x: boss.fighter.x, y: boss.fighter.y - 220, text: 'COUNTER -> WARD', color: '#fada30', life: 1.2 });
+            } else {
+                boss.fighter.hp -= counterDmg;
+                boss.fighter.hitTimer = 0.5;
+                boss.fighter.vx = -player.fighter.facing * 350;
+                boss.fighter.vy = -400;
+                boss.fighter.onGround = false;
+                boss.fighter.hitFlash = 0.3;
+                addShake(15, 0.3);
+                addHitStop(0.15);
+                sfx('hit_heavy');
+                spawnParticles(boss.fighter.x, boss.fighter.y - boss.fighter.h/2, '#fada30', 16);
+                floatingTexts.push({ x: boss.fighter.x, y: boss.fighter.y - 180, text: 'COUNTER!', color: '#fada30', life: 1.3 });
+                floatingTexts.push({ x: boss.fighter.x, y: boss.fighter.y - 160, text: `-${counterDmg}`, color: '#ff5a5a', life: 1.0 });
+                chatPush('sys', 'COUNTER on Evil Bald');
+            }
             return;
         }
         return;
@@ -1620,6 +1689,13 @@ function updateProjectiles(dt) {
                 p.life = 0;
             }
         } else if (p.owner === 'player') {
+            // Boss MtG card ward - check cards first
+            if (boss.cards && boss.cards.filter(c => !c.destroyed).length > 0) {
+                if (tryHitBossCard(p.x, p.y, p.damage, p.vx > 0 ? 1 : -1)) {
+                    p.life = 0;
+                    continue;
+                }
+            }
             // Hit boss if present (FIGHT mode)
             if (boss.fighter) {
                 const f = boss.fighter;
@@ -1849,8 +1925,48 @@ function updateEnemies(dt) {
                 }
             }
         } else if (e.ai === 'aggrocraig') {
+            // Active flag wave attack takes priority - Craig is committed for ~2 seconds
+            if (e.flagWave) {
+                const fw = e.flagWave;
+                fw.timer -= dt;
+                if (fw.timer <= 0) {
+                    fw.hitsThisSwing = false;
+                    if (fw.phase === 'wind')        { fw.phase = 'swingL'; fw.timer = 0.45; }
+                    else if (fw.phase === 'swingL') { fw.phase = 'swingR'; fw.timer = 0.45; fw.swingCount++; }
+                    else if (fw.phase === 'swingR') { fw.phase = 'swingL'; fw.timer = 0.45; fw.swingCount++; }
+                    if (fw.swingCount >= 4) { e.flagWave = null; }
+                }
+                // Apply AoE damage during active swing phases
+                if (e.flagWave && (e.flagWave.phase === 'swingL' || e.flagWave.phase === 'swingR') && !e.flagWave.hitsThisSwing) {
+                    const swingDir = e.flagWave.phase === 'swingL' ? -1 : 1;
+                    const zoneCenterX = e.x + swingDir * 160;
+                    const zoneHalfW = 220;
+                    if (Math.abs(player.fighter.x - zoneCenterX) < zoneHalfW && player.fighter.invuln <= 0 && player.fighter.hitTimer <= 0) {
+                        e.flagWave.hitsThisSwing = true;
+                        const blocked = player.fighter.state === 'blocking';
+                        const dmg = blocked ? 3 : 8;
+                        player.fighter.hp -= dmg;
+                        player.fighter.hitTimer = 0.25;
+                        player.fighter.vx = swingDir * 350;
+                        if (!blocked) { player.fighter.vy = -180; player.fighter.onGround = false; }
+                        player.fighter.hitFlash = 0.25;
+                        sfx(blocked ? 'block' : 'hit_heavy');
+                        addShake(blocked ? 4 : 8, 0.18);
+                        spawnParticles(player.fighter.x, player.fighter.y - 80, '#0a5a3a', 8);
+                        floatingTexts.push({ x: player.fighter.x, y: player.fighter.y - 120, text: blocked ? `BLOCK -${dmg}` : `-${dmg} JETS!`, color: blocked ? '#fada30' : '#0a8a3a', life: 0.9 });
+                    }
+                }
+                // Craig is locked in place during the swing (slight stagger forward each hit)
+                e.vx = 0;
+                e.state = 'idle';
+                // skip the rest of his AI this frame
+                e.x += e.vx * dt;
+                if (e.x < 50) e.x = 50;
+                if (e.x > LEVEL_END - 50) e.x = LEVEL_END - 50;
+                continue;
+            }
             // AggroCraig - Crohn's survivor / Jets fan mini-boss
-            // 3 attacks cycled: bad breath / poison cloud / jets flag swing
+            // 3 attacks cycled: bad breath / poison cloud / jets flag wave
             // Plus periodic "THIS ROUND'S ON ME" shot glass throws (cheap heal projectiles)
             const ideal = 130;
             if (dist > ideal + 80) { e.vx = Math.sign(dx) * e.speed; e.state = 'walking'; }
@@ -1919,22 +2035,18 @@ function updateEnemies(dt) {
                     });
                     sfx('damage');
                 } else {
-                    // JETS FLAG SWING - wide back-and-forth swing (hits if you're too close)
+                    // JETS FLAG WAVE - multi-swing back-and-forth AoE attack
                     const line = AGGROCRAIG_JETS_LINES[Math.floor(Math.random() * AGGROCRAIG_JETS_LINES.length)];
                     chatPush('sys', `AggroCraig: "${line}"`);
-                    floatingTexts.push({ x: e.x, y: e.y - e.h - 36, text: `"${line}"`, color: '#0a5a3a', life: 2.2 });
-                    if (dist < 160 && player.fighter.invuln <= 0 && player.fighter.hitTimer <= 0) {
-                        const blocked = player.fighter.state === 'blocking';
-                        const dmg = blocked ? 4 : 11;
-                        player.fighter.hp -= dmg;
-                        player.fighter.hitTimer = 0.30;
-                        player.fighter.vx = Math.sign(dx) * -400;
-                        if (!blocked) { player.fighter.vy = -250; player.fighter.onGround = false; }
-                        player.fighter.hitFlash = 0.3;
-                        sfx(blocked ? 'block' : 'hit_heavy');
-                        addShake(blocked ? 5 : 12, 0.3);
-                        floatingTexts.push({ x: player.fighter.x, y: player.fighter.y - 130, text: blocked ? `BLOCK -${dmg}` : `-${dmg}`, color: blocked ? '#fada30' : '#ff5a5a', life: 1.0 });
-                    }
+                    floatingTexts.push({ x: e.x, y: e.y - e.h - 50, text: `"${line}"`, color: '#0a5a3a', life: 2.4 });
+                    // Trigger a multi-phase flag swing state. Updated in flagWaveActive block below.
+                    e.flagWave = {
+                        phase: 'wind',           // wind -> swingL -> swingR -> swingL -> done
+                        timer: 0.4,
+                        swingCount: 0,
+                        hitsThisSwing: false
+                    };
+                    sfx('whiff');
                 }
             }
         } else if (e.ai === 'spartan_rifle') {
@@ -2173,6 +2285,54 @@ function damageObstacle(o, dmg, srcFacing) {
     }
 }
 
+function updateBossCards(dt) {
+    if (!boss.cards || boss.cards.length === 0) return;
+    for (const c of boss.cards) {
+        if (c.destroyed) continue;
+        c.bobPhase += dt * 1.5;
+        if (c.hitFlash > 0) c.hitFlash -= dt;
+    }
+    boss.cards = boss.cards.filter(c => !(c.destroyed && c.hitFlash <= 0));
+}
+
+// Tries to hit a boss-card with a player attack. Returns true if a card was hit.
+function tryHitBossCard(hitX, hitY, dmg, srcFacing) {
+    if (!boss.cards || boss.cards.length === 0) return false;
+    for (const c of boss.cards) {
+        if (c.destroyed) continue;
+        const yBob = Math.sin(c.bobPhase) * 4;
+        const left = c.x - c.w / 2;
+        const right = c.x + c.w / 2;
+        const top = c.y - c.h + yBob;     // y is feet position, height extends up
+        const bot = c.y + yBob;
+        if (hitX > left && hitX < right && hitY > top && hitY < bot) {
+            c.hp -= dmg;
+            c.hitFlash = 0.3;
+            sfx('hit_light');
+            spawnParticles(c.x, c.y + yBob, c.color, 6);
+            floatingTexts.push({ x: c.x, y: c.y + yBob - 30, text: `-${Math.round(dmg)}`, color: '#fff', life: 0.8 });
+            if (c.hp <= 0) {
+                c.destroyed = true;
+                spawnParticles(c.x, c.y + yBob, c.color, 24);
+                spawnParticles(c.x, c.y + yBob, '#fada30', 16);
+                sfx('hit_heavy');
+                addShake(8, 0.2);
+                chatPush('sys', `Card destroyed: ${c.name}`);
+                floatingTexts.push({ x: c.x, y: c.y + yBob - 50, text: `${c.name} DESTROYED`, color: c.color, life: 1.6 });
+                // If all cards destroyed, boss becomes vulnerable
+                const stillUp = boss.cards.filter(cc => !cc.destroyed).length;
+                if (stillUp === 0) {
+                    chatPush('sys', '!! WARD BROKEN - EVIL BALD VULNERABLE !!');
+                    floatingTexts.push({ x: boss.fighter.x, y: boss.fighter.y - 220, text: 'WARD BROKEN', color: '#ff5a5a', life: 2.0 });
+                    addShake(12, 0.4);
+                }
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
 function updateFlagAttack(dt) {
     if (!flagAttack) return;
     flagAttack.life -= dt;
@@ -2209,6 +2369,13 @@ function updateFlagAttack(dt) {
     const tryFlagHit = (target, isBossTarget) => {
         if (flagAttack.hitTargets.has(target)) return;
         if (target.x > fLeft && target.x < fRight && (target.y - target.h) < fBot && target.y > fTop - 20) {
+            // Ward absorbs flag hits against boss
+            if (isBossTarget && boss.cards && boss.cards.filter(c => !c.destroyed).length > 0) {
+                flagAttack.hitTargets.add(target);
+                tryHitBossCard(target.x, target.y - target.h * 0.5, flagAttack.damage, flagAttack.facing);
+                floatingTexts.push({ x: target.x, y: target.y - 230, text: 'FLAG -> WARD', color: '#fada30', life: 1.0 });
+                return;
+            }
             flagAttack.hitTargets.add(target);
             const dmg = flagAttack.damage;
             if (isBossTarget) {
@@ -2280,19 +2447,29 @@ function updateWaiters(dt) {
                 }
                 if (target && Math.abs(target.x - w.x) < 240) {
                     if (target === boss.fighter) {
-                        boss.fighter.hp -= w.damage;
-                        boss.fighter.hitFlash = 0.3;
-                        boss.fighter.hitTimer = 0.4;
-                        boss.fighter.vx = (boss.fighter.x > w.x ? 1 : -1) * 350;
-                        boss.fighter.attackPhase = 'none';
-                        boss.fighter.attackType = null;
-                        boss.fighter.attackData = null;
-                        boss.attackToken = (boss.attackToken || 0) + 1;
-                        if (boss.fighter.hp <= 0) {
-                            boss.fighter.hp = 0;
-                            gameState = STATE.WIN;
-                            stopBossMusic();
-                            sfx('win');
+                        // Ward absorbs platter if cards are still up
+                        const cardsUp = boss.cards && boss.cards.filter(c => !c.destroyed).length > 0;
+                        if (cardsUp) {
+                            tryHitBossCard(target.x, target.y - target.h * 0.5, w.damage, target.x > w.x ? 1 : -1);
+                            floatingTexts.push({ x: target.x, y: target.y - 230, text: 'PLATTER -> WARD', color: '#fada30', life: 1.0 });
+                        } else {
+                            boss.fighter.hp -= w.damage;
+                            boss.fighter.hitFlash = 0.3;
+                            boss.fighter.hitTimer = 0.4;
+                            boss.fighter.vx = (boss.fighter.x > w.x ? 1 : -1) * 350;
+                            boss.fighter.attackPhase = 'none';
+                            boss.fighter.attackType = null;
+                            boss.fighter.attackData = null;
+                            boss.attackToken = (boss.attackToken || 0) + 1;
+                            if (boss.fighter.hp <= 0 && boss.revived) {
+                                boss.fighter.hp = 0;
+                                gameState = STATE.WIN;
+                                stopBossMusic();
+                                sfx('win');
+                            } else if (boss.fighter.hp <= 0 && !boss.revived) {
+                                boss.fighter.hp = 0;
+                                triggerEvilBaldRevive();
+                            }
                         }
                     } else {
                         damageEnemy(target, w.damage, 320, (target.x > w.x ? 1 : -1));
@@ -2602,6 +2779,10 @@ function renderFight() {
 
     // Boss
     drawFighter(boss.fighter, 'evil_bald_sprite', 'boss');
+    // Cloak overlay (after revival)
+    if (boss.cloaked) drawBossCloak();
+    // MtG cards (rendered in front of boss so they look like a ward)
+    if (boss.cards && boss.cards.length > 0) drawBossCards();
     // Player
     drawFighter(player.fighter, player.data ? player.data.spriteKey : null, 'player');
     // Projectiles
@@ -2637,6 +2818,25 @@ function renderFight() {
         ctx.font = `bold ${36 + player.comboCount * 4}px Georgia`;
         ctx.shadowColor = '#000'; ctx.shadowBlur = 6;
         ctx.fillText(`${player.comboCount} HIT COMBO`, 40, H - 80);
+        ctx.shadowBlur = 0;
+    }
+    // Revive cinematic banner
+    if (boss.reviveTimer > 0) {
+        const totalDur = 2.4;
+        const a = Math.min(1, boss.reviveTimer / 0.4) * Math.min(1, (totalDur - boss.reviveTimer) / 0.3);
+        ctx.fillStyle = `rgba(0, 0, 0, ${a * 0.75})`;
+        ctx.fillRect(0, H / 2 - 110, GW, 180);
+        ctx.fillStyle = `rgba(255, 30, 30, ${a})`;
+        ctx.font = 'bold 64px Georgia';
+        ctx.textAlign = 'center';
+        ctx.shadowColor = '#000'; ctx.shadowBlur = 12;
+        ctx.fillText('EVIL BALD REVIVES', GW / 2, H / 2);
+        ctx.fillStyle = `rgba(180, 120, 240, ${a})`;
+        ctx.font = 'italic 22px Georgia';
+        ctx.fillText('"one more thing..."', GW / 2, H / 2 + 36);
+        ctx.fillStyle = `rgba(255, 200, 60, ${a * 0.9})`;
+        ctx.font = 'bold 16px Georgia';
+        ctx.fillText('destroy the cards to weaken him', GW / 2, H / 2 + 62);
         ctx.shadowBlur = 0;
     }
 }
@@ -3118,6 +3318,62 @@ function renderStage() {
 
 function drawEnemy(e) {
     if (!e.alive) return;
+    // Craig's giant green Jets flag wave - render the sweep arc when active
+    if (e.flagWave) {
+        const fw = e.flagWave;
+        const swingDir = fw.phase === 'swingR' ? 1 : (fw.phase === 'swingL' ? -1 : (fw.swingCount % 2 === 0 ? -1 : 1));
+        const cx = e.x;
+        const cy = e.y - e.h * 0.55;
+        // Wind-up: small banner held up
+        if (fw.phase === 'wind') {
+            ctx.save();
+            ctx.translate(cx, cy);
+            ctx.fillStyle = '#0a5a3a';
+            ctx.fillRect(-12, -90, 110, 70);
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 16px Georgia';
+            ctx.textAlign = 'center';
+            ctx.fillText('JETS', 44, -52);
+            ctx.fillStyle = '#fada30';
+            ctx.font = 'bold 12px Georgia';
+            ctx.fillText('WIND-UP', 44, -100);
+            ctx.restore();
+        }
+        // Active swing: huge swooping arc
+        if (fw.phase === 'swingL' || fw.phase === 'swingR') {
+            const t = 1 - fw.timer / 0.45;
+            const alpha = Math.sin(t * Math.PI);
+            ctx.save();
+            ctx.translate(cx, cy);
+            // Flag arc polygon - sweeping from one side to the other
+            ctx.fillStyle = `rgba(10, 90, 58, ${alpha * 0.7})`;
+            ctx.beginPath();
+            const startA = swingDir > 0 ? -Math.PI / 2 : Math.PI / 2;
+            const endA = swingDir > 0 ? Math.PI / 2 : -Math.PI / 2;
+            const sweepA = startA + (endA - startA) * t;
+            const radius = 240;
+            ctx.moveTo(0, 0);
+            for (let a = startA; a !== sweepA; a += (sweepA - startA) * 0.05) {
+                ctx.lineTo(Math.cos(a) * radius, Math.sin(a) * radius * 0.7);
+                if (Math.abs(a - sweepA) < 0.05) break;
+            }
+            ctx.lineTo(Math.cos(sweepA) * radius, Math.sin(sweepA) * radius * 0.7);
+            ctx.closePath();
+            ctx.fill();
+            // White outline trail
+            ctx.strokeStyle = `rgba(255, 255, 255, ${alpha * 0.85})`;
+            ctx.lineWidth = 4;
+            ctx.stroke();
+            // JETS text spinning along the flag
+            ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+            ctx.font = 'bold 22px Georgia';
+            ctx.textAlign = 'center';
+            const tx = Math.cos(sweepA) * radius * 0.7;
+            const ty = Math.sin(sweepA) * radius * 0.5;
+            ctx.fillText('JETS', tx, ty);
+            ctx.restore();
+        }
+    }
     const img = IMAGES[e.spriteKey] && IMAGES[e.spriteKey].loaded ? IMAGES[e.spriteKey].img : null;
     const bob = Math.abs(Math.sin(e.bobPhase)) * (e.state === 'walking' ? -5 : -1);
     const drawScale = e.drawScale || 1.5;
@@ -3456,6 +3712,108 @@ function drawWaiter(w) {
         ctx.fillStyle = '#cccccc';
         ctx.beginPath();
         ctx.arc(w.x + w.facing * 28, w.y - 130, 18, 0, Math.PI * 2);
+        ctx.fill();
+    }
+}
+
+function drawBossCloak() {
+    const bx = boss.fighter.x;
+    const by = boss.fighter.y;
+    const sway = Math.sin(Date.now() / 600) * 6;
+    // Dark robe trapezoid behind the boss
+    ctx.save();
+    ctx.fillStyle = 'rgba(8, 4, 12, 0.85)';
+    ctx.beginPath();
+    ctx.moveTo(bx - 110 - sway, by);
+    ctx.lineTo(bx - 70, by - boss.fighter.h * 0.6);
+    ctx.lineTo(bx - 60, by - boss.fighter.h - 30);
+    ctx.lineTo(bx + 60, by - boss.fighter.h - 30);
+    ctx.lineTo(bx + 70, by - boss.fighter.h * 0.6);
+    ctx.lineTo(bx + 110 + sway, by);
+    ctx.closePath();
+    ctx.fill();
+    // Cape inner shadow
+    ctx.fillStyle = 'rgba(60, 0, 20, 0.6)';
+    ctx.beginPath();
+    ctx.moveTo(bx - 80, by - 10);
+    ctx.lineTo(bx - 55, by - boss.fighter.h * 0.5);
+    ctx.lineTo(bx + 55, by - boss.fighter.h * 0.5);
+    ctx.lineTo(bx + 80, by - 10);
+    ctx.closePath();
+    ctx.fill();
+    // Hood over the head
+    ctx.fillStyle = 'rgba(8, 4, 12, 0.95)';
+    ctx.beginPath();
+    ctx.arc(bx, by - boss.fighter.h - 5, 60, Math.PI, 0, false);
+    ctx.lineTo(bx + 50, by - boss.fighter.h + 20);
+    ctx.lineTo(bx - 50, by - boss.fighter.h + 20);
+    ctx.closePath();
+    ctx.fill();
+    // Glowing red eye slits inside the hood
+    const eyePulse = 0.6 + Math.sin(Date.now() / 200) * 0.4;
+    ctx.fillStyle = `rgba(255, 30, 30, ${eyePulse})`;
+    ctx.shadowColor = '#ff2010';
+    ctx.shadowBlur = 14;
+    ctx.fillRect(bx - 18, by - boss.fighter.h - 8, 10, 4);
+    ctx.fillRect(bx + 8, by - boss.fighter.h - 8, 10, 4);
+    ctx.shadowBlur = 0;
+    ctx.restore();
+}
+
+function drawBossCards() {
+    for (const c of boss.cards) {
+        if (c.destroyed) continue;
+        const yBob = Math.sin(c.bobPhase) * 5;
+        const cardX = c.x;
+        const cardY = c.y - c.h / 2 + yBob;
+        ctx.save();
+        // Hit flash
+        if (c.hitFlash > 0) {
+            ctx.fillStyle = `rgba(255, 255, 255, ${c.hitFlash * 2})`;
+            ctx.fillRect(cardX - c.w / 2 - 4, c.y - c.h + yBob - 4, c.w + 8, c.h + 8);
+        }
+        // Card back (tarnished gold border)
+        ctx.fillStyle = '#1a0a08';
+        ctx.fillRect(cardX - c.w / 2, c.y - c.h + yBob, c.w, c.h);
+        ctx.strokeStyle = '#aa8838';
+        ctx.lineWidth = 3;
+        ctx.strokeRect(cardX - c.w / 2, c.y - c.h + yBob, c.w, c.h);
+        // Title bar
+        ctx.fillStyle = '#2a1810';
+        ctx.fillRect(cardX - c.w / 2 + 4, c.y - c.h + yBob + 4, c.w - 8, 14);
+        ctx.fillStyle = '#fada30';
+        ctx.font = 'bold 8px Georgia';
+        ctx.textAlign = 'center';
+        ctx.fillText(c.name, cardX, c.y - c.h + yBob + 14);
+        // Art box (colored window mimicking MtG art frame)
+        ctx.fillStyle = c.color;
+        ctx.fillRect(cardX - c.w / 2 + 4, c.y - c.h + yBob + 22, c.w - 8, c.h * 0.45);
+        // Simple sigil inside the art area
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+        ctx.beginPath();
+        ctx.arc(cardX, c.y - c.h + yBob + 22 + c.h * 0.45 / 2, 12, 0, Math.PI * 2);
+        ctx.fill();
+        // Type line
+        ctx.fillStyle = '#2a1810';
+        ctx.fillRect(cardX - c.w / 2 + 4, c.y - c.h + yBob + 22 + c.h * 0.45 + 2, c.w - 8, 10);
+        ctx.fillStyle = '#fada30';
+        ctx.font = '7px Georgia';
+        ctx.fillText('Instant', cardX, c.y - c.h + yBob + 22 + c.h * 0.45 + 9);
+        // HP bar above the card
+        const barW = c.w - 10;
+        ctx.fillStyle = '#000';
+        ctx.fillRect(cardX - barW / 2 - 1, c.y - c.h + yBob - 12, barW + 2, 5);
+        ctx.fillStyle = '#c41818';
+        ctx.fillRect(cardX - barW / 2, c.y - c.h + yBob - 11, barW * (c.hp / c.maxHp), 3);
+        ctx.restore();
+    }
+    // Magic ward aura connecting cards visually
+    const aliveCount = boss.cards.filter(c => !c.destroyed).length;
+    if (aliveCount > 0 && boss.fighter) {
+        const auraPulse = 0.3 + Math.sin(Date.now() / 200) * 0.2;
+        ctx.fillStyle = `rgba(120, 80, 200, ${auraPulse * 0.25})`;
+        ctx.beginPath();
+        ctx.ellipse(boss.fighter.x, boss.fighter.y - 60, 180, 100, 0, 0, Math.PI * 2);
         ctx.fill();
     }
 }
