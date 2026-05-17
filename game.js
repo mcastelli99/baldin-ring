@@ -855,9 +855,10 @@ function tryHeavy() {
     const myType = 'heavy';
 
     if (player.charKey === 'slug') {
-        // UFC Ticket Fan - 3 gold tickets in a spread
+        // UFC Ticket Fan - 3 gold tickets in a spread (works in STAGE + FIGHT)
         setTimeout(() => {
-            if (gameState !== STATE.FIGHT || f.attackType !== myType) return;
+            if (gameState !== STATE.FIGHT && gameState !== STATE.STAGE) return;
+            if (f.attackType !== myType) return;
             const baseX = f.x + f.facing * 40;
             const baseY = f.y - f.h / 2;
             for (let i = -1; i <= 1; i++) {
@@ -899,22 +900,36 @@ function trySpecial() {
     const startupMs = player.data.special.startup * 1000;
     const proj = player.data.special.projectile;
 
+    // Helper: pick nearest target (boss in FIGHT, nearest enemy in STAGE) for player projectile homing
+    const pickTarget = () => {
+        if (boss.fighter) return boss.fighter;
+        const alive = enemies.filter(e => e.alive && !e.dormant);
+        if (alive.length === 0) return null;
+        let nearest = alive[0]; let dmin = Math.abs(nearest.x - f.x);
+        for (const e of alive) {
+            const d = Math.abs(e.x - f.x);
+            if (d < dmin) { nearest = e; dmin = d; }
+        }
+        return nearest;
+    };
+
     if (proj === 'questions') {
-        // LADDER MAN: 3 giant question marks fired at the boss
+        // LADDER MAN: 3 giant question marks fired at nearest target (works in STAGE + FIGHT)
         setTimeout(() => {
-            if (gameState !== STATE.FIGHT) return;
+            if (gameState !== STATE.FIGHT && gameState !== STATE.STAGE) return;
             chatPush('sys', 'Ladder Man: ???');
             for (let i = 0; i < 3; i++) {
                 setTimeout(() => {
-                    if (gameState !== STATE.FIGHT) return;
+                    if (gameState !== STATE.FIGHT && gameState !== STATE.STAGE) return;
                     const baseX = f.x + f.facing * 40;
                     const baseY = f.y - f.h * 0.6;
-                    const target = boss.fighter;
-                    const targetX = target.x;
-                    const targetY = target.y - target.h * 0.5;
+                    const target = pickTarget();
+                    // Fall back to firing straight ahead if no target
+                    const targetX = target ? target.x : baseX + f.facing * 500;
+                    const targetY = target ? target.y - target.h * 0.5 : baseY;
                     const dx = targetX - baseX;
                     const dy = targetY - baseY + (i - 1) * 30;
-                    const dist = Math.hypot(dx, dy);
+                    const dist = Math.max(1, Math.hypot(dx, dy));
                     projectiles.push({
                         type: 'question',
                         x: baseX, y: baseY,
@@ -930,9 +945,9 @@ function trySpecial() {
             }
         }, startupMs);
     } else if (proj === 'flag') {
-        // GENERIC WHITE: unfurl Puerto Rican flag and sweep boss
+        // GENERIC WHITE: unfurl Puerto Rican flag and sweep (works in STAGE + FIGHT)
         setTimeout(() => {
-            if (gameState !== STATE.FIGHT) return;
+            if (gameState !== STATE.FIGHT && gameState !== STATE.STAGE) return;
             chatPush('sys', 'Generic White unfurls the flag');
             flagAttack = {
                 x: f.x + f.facing * 30,
