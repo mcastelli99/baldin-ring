@@ -284,17 +284,19 @@ const ENEMY_TYPES = {
     aggrocraig: {
         spriteKey: 'aggrocraig_enemy',
         w: 90, h: 165, drawScale: 1.5, spriteDefaultFacing: -1,
-        hp: 22,                 // squishy for a mini-boss but bigger HP than regular enemies
+        hp: 28,
         damage: 11,
         speed: 80,
-        attackRange: 140,       // jets flag swing reach
+        attackRange: 140,
         attackCooldown: 1.6,
-        ai: 'aggrocraig',       // custom AI with 3 attack patterns
+        ai: 'aggrocraig',
         runeReward: 25,
         miniboss: true,
         title: 'THE AGGROCRAIG',
         subtitle: 'Crohns Survivor / Jets Fan',
-        healOnDefeat: 18        // last-ditch heal when defeated (cheap round)
+        cheapHealCooldown: 7.5,  // every ~7.5s during fight, throws a cheap shot glass
+        cheapHealAmount: 4,      // small heal (he's cheap)
+        fullHealOnDefeat: true   // on defeat: restore full HP + max flasks
     }
 };
 
@@ -416,7 +418,9 @@ const stage = {
     showGoArrow: false,
     transitionAlpha: 0,
     bannerText: '',
-    bannerTimer: 0
+    bannerTimer: 0,
+    lockedAt: null,           // world X past which the player cannot walk (set when mini-boss appears)
+    lockedMiniboss: null      // the miniboss enemy ref currently gating progress
 };
 
 let enemies = [];      // halo grunts, mets fans
@@ -628,6 +632,8 @@ function startFight() {
     cameraX = 0;
     hitStopTimer = 0;
     shakeTimer = 0;
+    stage.lockedAt = null;
+    stage.lockedMiniboss = null;
     player.comboCount = 0;
     player.comboTimer = 0;
     player.specialCd = 0;
@@ -766,7 +772,8 @@ function makeEnemy(type, x) {
         hitFlash: 0,
         onGround: true,
         bobPhase: Math.random() * Math.PI * 2,
-        alive: true
+        alive: true,
+        cheapHealTimer: (d.cheapHealCooldown || 0) * 0.6  // for AggroCraig - first shot glass after ~4-5s
     };
 }
 
@@ -1282,9 +1289,13 @@ function updateFighter(f, dt, isBoss) {
     }
 
     // Boundary - in stage mode the level is wider than the screen
-    const maxX = (gameState === STATE.STAGE) ? LEVEL_END - 50 : GW - 50;
+    let maxX = (gameState === STATE.STAGE) ? LEVEL_END - 50 : GW - 50;
+    // Mini-boss arena lock: cannot proceed past the gating miniboss until defeated
+    if (gameState === STATE.STAGE && !isBoss && stage.lockedAt !== null) {
+        maxX = Math.min(maxX, stage.lockedAt);
+    }
     if (f.x < 50) f.x = 50;
-    if (f.x > maxX) f.x = maxX;
+    if (f.x > maxX) { f.x = maxX; if (f.vx > 0) f.vx = 0; }
 
     // data ref for fighter (for attacks)
     f.data = isBoss ? BOSS_DATA : player.data;
@@ -1554,6 +1565,30 @@ function updateProjectiles(dt) {
         p.vy += 800 * dt;
         p.spin += dt * 8;
         p.life -= dt;
+
+        // AggroCraig's shot glass - heals player on pickup (friendly projectile)
+        if (p.owner === 'craig_heal') {
+            // Pickup check
+            const f = player.fighter;
+            if (p.x > f.x - f.w / 2 - 10 && p.x < f.x + f.w / 2 + 10 && p.y > f.y - f.h && p.y < f.y + 10) {
+                const heal = p.healAmount || 4;
+                f.hp = Math.min(f.maxHp, f.hp + heal);
+                sfx('heal');
+                spawnParticles(f.x, f.y - 80, '#5aff5a', 8);
+                floatingTexts.push({ x: f.x, y: f.y - 140, text: `+${heal} HP (cheap)`, color: '#5aff5a', life: 1.4 });
+                p.life = 0;
+                continue;
+            }
+            // Ground bounce: stop on floor (becomes a wasted shot)
+            if (p.y > FLOOR_Y) {
+                p.y = FLOOR_Y;
+                p.vy = 0;
+                p.vx *= 0.7;
+                if (Math.abs(p.vx) < 30) p.life = Math.min(p.life, 0.8);  // expires quickly on ground
+            }
+            continue;
+        }
+
         // Hit target
         if (p.owner === 'boss') {
             // hits player
@@ -1692,7 +1727,7 @@ function updateStage(dt) {
     for (const e of enemies) {
         if (e.dormant && (e.x - player.fighter.x) < wakeRange) {
             e.dormant = false;
-            // Mini-boss dramatic entry banner
+            // Mini-boss dramatic entry banner + LOCK the player in the arena until defeated
             if (e.miniboss && e.title) {
                 stage.bannerText = e.title;
                 stage.bannerSubtitle = e.subtitle || '';
@@ -1700,8 +1735,20 @@ function updateStage(dt) {
                 chatPush('sys', `!! ${e.title} APPEARS !!`);
                 addShake(10, 0.5);
                 sfx('parry');
+                // Lock the arena - player cant proceed past the miniboss until defeated
+                if (!stage.lockedAt) {
+                    stage.lockedAt = e.x + 220;
+                    stage.lockedMiniboss = e;
+                }
             }
         }
+    }
+    // Release lock if the gating miniboss died
+    if (stage.lockedMiniboss && (!stage.lockedMiniboss.alive || stage.lockedMiniboss.hp <= 0)) {
+        chatPush('sys', `${stage.lockedMiniboss.title} defeated! Path open.`);
+        floatingTexts.push({ x: stage.lockedAt, y: FLOOR_Y - 200, text: 'PATH OPEN ->', color: '#fada30', life: 2.0 });
+        stage.lockedAt = null;
+        stage.lockedMiniboss = null;
     }
     for (const o of obstacles) {
         if (o.dormant && (o.x - player.fighter.x) < wakeRange) {
@@ -1784,11 +1831,34 @@ function updateEnemies(dt) {
             }
         } else if (e.ai === 'aggrocraig') {
             // AggroCraig - Crohn's survivor / Jets fan mini-boss
-            // 3 attacks cycled: bad breath (close range cone), poison cloud (lingering AOE), jets flag swing (wide back-and-forth)
+            // 3 attacks cycled: bad breath / poison cloud / jets flag swing
+            // Plus periodic "THIS ROUND'S ON ME" shot glass throws (cheap heal projectiles)
             const ideal = 130;
             if (dist > ideal + 80) { e.vx = Math.sign(dx) * e.speed; e.state = 'walking'; }
             else if (dist < ideal - 60) { e.vx = -Math.sign(dx) * e.speed * 0.6; e.state = 'walking'; }
             else { e.vx = 0; e.state = 'idle'; }
+
+            // Cheap shot glass throw (random heal-projectile interrupt)
+            e.cheapHealTimer -= dt;
+            if (e.cheapHealTimer <= 0 && player.fighter.hp < player.fighter.maxHp) {
+                e.cheapHealTimer = (e.cheapHealCooldown || 8) + Math.random() * 3;
+                chatPush('sys', "AggroCraig: THIS ROUND'S ON ME");
+                floatingTexts.push({ x: e.x, y: e.y - e.h - 36, text: "THIS ROUND'S ON ME", color: '#fada30', life: 2.0 });
+                // Lobbed shot glass arcs toward player
+                const arcDx = player.fighter.x - e.x;
+                projectiles.push({
+                    type: 'shotglass',
+                    x: e.x + e.facing * 30,
+                    y: e.y - e.h * 0.7,
+                    vx: arcDx * 0.7,
+                    vy: -380,
+                    healAmount: e.cheapHealAmount || 4,
+                    owner: 'craig_heal',
+                    life: 4.0,
+                    spin: 0
+                });
+                sfx('parry');
+            }
             if (e.attackTimer <= 0) {
                 e.attackTimer = e.attackCooldown;
                 const move = (e.lastMove || 0) % 3;
@@ -2042,14 +2112,22 @@ function damageEnemy(e, dmg, knockback, srcFacing) {
         sfx('hit_heavy');
         player.runes += e.runeReward || 5;
         floatingTexts.push({ x: e.x, y: e.y - e.h - 30, text: `+${e.runeReward} R`, color: '#fada30', life: 1.2 });
-        // AggroCraig drops a cheap-round heal when he goes down
-        if (e.healOnDefeat && player.fighter.hp < player.fighter.maxHp) {
-            const heal = e.healOnDefeat;
-            player.fighter.hp = Math.min(player.fighter.maxHp, player.fighter.hp + heal);
+        // AggroCraig's last call: FULL HP + max flasks ("the LAST round is on me")
+        if (e.fullHealOnDefeat) {
+            const hpRestored = player.fighter.maxHp - player.fighter.hp;
+            player.fighter.hp = player.fighter.maxHp;
+            const flasksBefore = player.flasks;
+            player.flasks = Math.max(player.flasks, 3);
+            const flasksGained = player.flasks - flasksBefore;
             sfx('heal');
-            chatPush('sys', "AggroCraig: THIS ROUND'S ON ME");
-            floatingTexts.push({ x: e.x, y: e.y - e.h - 60, text: "THIS ROUND'S ON ME", color: '#5aff5a', life: 2.0 });
-            floatingTexts.push({ x: player.fighter.x, y: player.fighter.y - 160, text: `+${heal} HP`, color: '#5aff5a', life: 1.5 });
+            chatPush('sys', "AggroCraig: THE LAST ROUND IS ON ME");
+            chatPush('sys', `Full HP restored${flasksGained > 0 ? ` + ${flasksGained} flask${flasksGained > 1 ? 's' : ''}` : ''}`);
+            floatingTexts.push({ x: e.x, y: e.y - e.h - 60, text: "LAST ROUND ON ME", color: '#fada30', life: 2.5 });
+            floatingTexts.push({ x: player.fighter.x, y: player.fighter.y - 160, text: `FULL HEAL`, color: '#5aff5a', life: 2.0 });
+            if (flasksGained > 0) {
+                floatingTexts.push({ x: player.fighter.x, y: player.fighter.y - 195, text: `+${flasksGained} FLASKS`, color: '#5aff5a', life: 2.0 });
+            }
+            spawnParticles(player.fighter.x, player.fighter.y - 80, '#5aff5a', 30);
         }
         return true;
     }
@@ -2658,6 +2736,38 @@ function drawFighter(f, spriteKey, who) {
 }
 
 function drawProjectile(p) {
+    if (p.type === 'shotglass') {
+        // Small glass with brown liquor, sparkles, "$1" sticker
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(Math.sin(p.spin) * 0.6);
+        // Glow halo
+        ctx.shadowColor = '#fada30';
+        ctx.shadowBlur = 18;
+        // Glass body
+        ctx.fillStyle = 'rgba(200, 220, 240, 0.85)';
+        ctx.fillRect(-10, -14, 20, 22);
+        // Liquor
+        ctx.fillStyle = '#a04818';
+        ctx.fillRect(-9, -8, 18, 14);
+        // Foam at top
+        ctx.fillStyle = '#ffeec0';
+        ctx.fillRect(-9, -9, 18, 3);
+        // Rim
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(-10, -14, 20, 22);
+        ctx.shadowBlur = 0;
+        // Tiny price tag
+        ctx.fillStyle = '#000';
+        ctx.fillRect(-4, 8, 10, 8);
+        ctx.fillStyle = '#fada30';
+        ctx.font = 'bold 8px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('$1', 1, 14);
+        ctx.restore();
+        return;
+    }
     if (p.type === 'breath') {
         // AggroCraig bad-breath cloud puff - small sickly green wisps
         ctx.save();
@@ -2848,6 +2958,31 @@ function renderStage() {
     for (let x = 0; x < LEVEL_END; x += 400) {
         ctx.fillStyle = 'rgba(150, 60, 30, 0.3)';
         ctx.fillRect(x, FLOOR_Y + 12, 4, 4);
+    }
+
+    // Mini-boss arena BARRIER - shimmering red wall at the lock position
+    if (stage.lockedAt !== null) {
+        const wallX = stage.lockedAt;
+        const pulse = 0.4 + Math.sin(Date.now() / 150) * 0.3;
+        ctx.fillStyle = `rgba(200, 30, 30, ${pulse * 0.35})`;
+        ctx.fillRect(wallX, FLOOR_Y - 280, 14, 280);
+        ctx.fillStyle = `rgba(255, 80, 60, ${pulse})`;
+        ctx.fillRect(wallX + 4, FLOOR_Y - 280, 6, 280);
+        // Hazard chevrons up the wall
+        ctx.fillStyle = `rgba(255, 200, 40, ${pulse * 0.8})`;
+        for (let yy = FLOOR_Y - 270; yy < FLOOR_Y; yy += 30) {
+            ctx.beginPath();
+            ctx.moveTo(wallX - 2, yy);
+            ctx.lineTo(wallX + 14, yy + 8);
+            ctx.lineTo(wallX - 2, yy + 16);
+            ctx.closePath();
+            ctx.fill();
+        }
+        // "DEFEAT TO PROCEED" label
+        ctx.fillStyle = `rgba(255, 80, 60, ${pulse})`;
+        ctx.font = 'bold 13px Georgia';
+        ctx.textAlign = 'left';
+        ctx.fillText('< DEFEAT TO PROCEED', wallX + 20, FLOOR_Y - 240);
     }
 
     // Boss door at the end of the level
