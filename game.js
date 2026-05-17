@@ -410,8 +410,8 @@ const AGGROCRAIG_JETS_LINES = [
 
 // Stage progression state
 const stage = {
-    wave: 0,           // 1..4
-    phase: 'inactive', // 'walking' | 'wave_active' | 'wave_cleared' | 'transitioning'
+    wave: 0,
+    phase: 'inactive',
     phaseTimer: 0,
     enemiesRemaining: 0,
     obstaclesRemaining: 0,
@@ -419,8 +419,9 @@ const stage = {
     transitionAlpha: 0,
     bannerText: '',
     bannerTimer: 0,
-    lockedAt: null,           // world X past which the player cannot walk (set when mini-boss appears)
-    lockedMiniboss: null      // the miniboss enemy ref currently gating progress
+    lockedAt: null,           // RIGHT wall world X (player cant walk past)
+    lockedLeftAt: null,       // LEFT wall world X (cant retreat past)
+    lockedMiniboss: null
 };
 
 let enemies = [];      // halo grunts, mets fans
@@ -633,6 +634,7 @@ function startFight() {
     hitStopTimer = 0;
     shakeTimer = 0;
     stage.lockedAt = null;
+    stage.lockedLeftAt = null;
     stage.lockedMiniboss = null;
     player.comboCount = 0;
     player.comboTimer = 0;
@@ -1291,11 +1293,13 @@ function updateFighter(f, dt, isBoss) {
 
     // Boundary - in stage mode the level is wider than the screen
     let maxX = (gameState === STATE.STAGE) ? LEVEL_END - 50 : GW - 50;
-    // Mini-boss arena lock: cannot proceed past the gating miniboss until defeated
-    if (gameState === STATE.STAGE && !isBoss && stage.lockedAt !== null) {
-        maxX = Math.min(maxX, stage.lockedAt);
+    let minX = 50;
+    // Mini-boss arena: 2-sided lock so player has running room but cant flee or skip ahead
+    if (gameState === STATE.STAGE && !isBoss) {
+        if (stage.lockedAt !== null) maxX = Math.min(maxX, stage.lockedAt);
+        if (stage.lockedLeftAt !== null) minX = Math.max(minX, stage.lockedLeftAt);
     }
-    if (f.x < 50) f.x = 50;
+    if (f.x < minX) { f.x = minX; if (f.vx < 0) f.vx = 0; }
     if (f.x > maxX) { f.x = maxX; if (f.vx > 0) f.vx = 0; }
 
     // data ref for fighter (for attacks)
@@ -1746,10 +1750,11 @@ function updateStage(dt) {
                 addShake(10, 0.5);
                 sfx('parry');
                 if (!stage.lockedAt) {
-                    // Wall just LEFT of miniboss, so player can't walk past and end up with miniboss behind them
-                    stage.lockedAt = e.x - 70;
+                    // 2.5 screens of arena around the miniboss for kiting room
+                    // (~1000 left of miniboss to retreat, ~1400 right of miniboss to chase)
+                    stage.lockedLeftAt = e.x - 1000;
+                    stage.lockedAt = e.x + 1400;
                     stage.lockedMiniboss = e;
-                    stage.lockMinibossMinX = player.fighter.x + 100;  // miniboss can't retreat past player
                 }
             }
         }
@@ -1759,6 +1764,7 @@ function updateStage(dt) {
         chatPush('sys', `${stage.lockedMiniboss.title} defeated! Path open.`);
         floatingTexts.push({ x: stage.lockedAt, y: FLOOR_Y - 200, text: 'PATH OPEN ->', color: '#fada30', life: 2.0 });
         stage.lockedAt = null;
+        stage.lockedLeftAt = null;
         stage.lockedMiniboss = null;
     }
     for (const o of obstacles) {
@@ -2979,30 +2985,36 @@ function renderStage() {
         ctx.fillRect(x, FLOOR_Y + 12, 4, 4);
     }
 
-    // Mini-boss arena BARRIER - shimmering red wall at the lock position
-    if (stage.lockedAt !== null) {
-        const wallX = stage.lockedAt;
+    // Mini-boss arena BARRIERS - shimmering red walls at both ends so player has running room between
+    const drawArenaWall = (wallX, faceLeft) => {
         const pulse = 0.4 + Math.sin(Date.now() / 150) * 0.3;
         ctx.fillStyle = `rgba(200, 30, 30, ${pulse * 0.35})`;
-        ctx.fillRect(wallX, FLOOR_Y - 280, 14, 280);
+        ctx.fillRect(wallX - (faceLeft ? 14 : 0), FLOOR_Y - 280, 14, 280);
         ctx.fillStyle = `rgba(255, 80, 60, ${pulse})`;
-        ctx.fillRect(wallX + 4, FLOOR_Y - 280, 6, 280);
-        // Hazard chevrons up the wall
+        ctx.fillRect(wallX - (faceLeft ? 10 : 0) + (faceLeft ? 0 : 4), FLOOR_Y - 280, 6, 280);
+        // Hazard chevrons
         ctx.fillStyle = `rgba(255, 200, 40, ${pulse * 0.8})`;
         for (let yy = FLOOR_Y - 270; yy < FLOOR_Y; yy += 30) {
             ctx.beginPath();
-            ctx.moveTo(wallX - 2, yy);
-            ctx.lineTo(wallX + 14, yy + 8);
-            ctx.lineTo(wallX - 2, yy + 16);
+            if (faceLeft) {
+                ctx.moveTo(wallX + 2, yy);
+                ctx.lineTo(wallX - 14, yy + 8);
+                ctx.lineTo(wallX + 2, yy + 16);
+            } else {
+                ctx.moveTo(wallX - 2, yy);
+                ctx.lineTo(wallX + 14, yy + 8);
+                ctx.lineTo(wallX - 2, yy + 16);
+            }
             ctx.closePath();
             ctx.fill();
         }
-        // "DEFEAT TO PROCEED" label
         ctx.fillStyle = `rgba(255, 80, 60, ${pulse})`;
         ctx.font = 'bold 13px Georgia';
-        ctx.textAlign = 'left';
-        ctx.fillText('< DEFEAT TO PROCEED', wallX + 20, FLOOR_Y - 240);
-    }
+        ctx.textAlign = faceLeft ? 'right' : 'left';
+        ctx.fillText(faceLeft ? 'NO RETREAT >' : '< DEFEAT TO PROCEED', wallX + (faceLeft ? -20 : 20), FLOOR_Y - 240);
+    };
+    if (stage.lockedAt !== null) drawArenaWall(stage.lockedAt, false);
+    if (stage.lockedLeftAt !== null) drawArenaWall(stage.lockedLeftAt, true);
 
     // Boss door at the end of the level
     if (player.fighter.x > LEVEL_END - 1200) {
