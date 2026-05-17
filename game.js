@@ -36,7 +36,8 @@ const IMAGES = {
     spam_food:               { src: 'assets/img/sprites/spam_food.png',               img: null, loaded: false },
     spam_rip:                { src: 'assets/img/sprites/spam_rip.png',                img: null, loaded: false },
     spam_flex:               { src: 'assets/img/sprites/spam_flex.png',               img: null, loaded: false },
-    background_arena:        { src: 'assets/img/sprites/background_arena.png',        img: null, loaded: false }
+    background_arena:        { src: 'assets/img/sprites/background_arena.png',        img: null, loaded: false },
+    waiter_sprite:           { src: 'assets/img/sprites/waiter_sprite.png',           img: null, loaded: false }
 };
 (function loadImages() {
     Object.keys(IMAGES).forEach(key => {
@@ -97,9 +98,9 @@ const CHARACTERS = {
         jumpPower: 750,
         light: { startup: 0.08, active: 0.10, recovery: 0.20, damage: 7,  knockback: 200, range: 90, height: 70 },
         heavy: { startup: 0.22, active: 0.14, recovery: 0.40, damage: 16, knockback: 380, range: 130, height: 100 },
-        specialName: "LADDER SWING",
-        specialDesc: "Wide swing. Hits both sides. Knocks boss across screen.",
-        special: { startup: 0.30, active: 0.30, recovery: 0.55, damage: 24, knockback: 500, range: 160, height: 140, both: true },
+        specialName: "??? BARRAGE",
+        specialDesc: "Hurls 3 giant question marks at the boss. Confusion damage.",
+        special: { startup: 0.25, active: 0.10, recovery: 0.40, damage: 0, knockback: 0, range: 0, height: 0, projectile: 'questions' },
         spriteKey: 'ladder_man_sprite',
         spriteDefaultFacing: 1,   // source has ladder over right shoulder = faces RIGHT
         bodyW: 58,    // skinny
@@ -114,9 +115,9 @@ const CHARACTERS = {
         jumpPower: 760,
         light: { startup: 0.06, active: 0.10, recovery: 0.18, damage: 6,  knockback: 180, range: 80, height: 90 },
         heavy: { startup: 0.18, active: 0.12, recovery: 0.35, damage: 14, knockback: 350, range: 110, height: 100 },
-        specialName: "SHIELD COUNTER",
-        specialDesc: "Brief invuln. If hit during, automatic counter-slash for huge damage.",
-        special: { startup: 0.05, active: 0.50, recovery: 0.40, damage: 30, knockback: 450, range: 130, height: 110, counter: true },
+        specialName: "PUERTO RICAN PRIDE",
+        specialDesc: "Unfurls a giant PR flag that sweeps the boss. Massive damage + knockback.",
+        special: { startup: 0.30, active: 0.10, recovery: 0.45, damage: 0, knockback: 0, range: 0, height: 0, projectile: 'flag' },
         spriteKey: 'generic_white_sprite',
         spriteDefaultFacing: -1,  // sword on viewer's left = faces LEFT
         bodyW: 72,    // medium build
@@ -131,9 +132,9 @@ const CHARACTERS = {
         jumpPower: 720,
         light: { startup: 0.07, active: 0.09, recovery: 0.16, damage: 5,  knockback: 170, range: 75, height: 80 },
         heavy: { startup: 0.20, active: 0.12, recovery: 0.32, damage: 12, knockback: 330, range: 100, height: 95 },
-        specialName: "UFC TICKET FAN",
-        specialDesc: "Throws 3 gold tickets in a spread. Ranged projectiles.",
-        special: { startup: 0.18, active: 0.05, recovery: 0.40, damage: 12, knockback: 200, range: 0, height: 0, projectile: 'tickets' },
+        specialName: "WAITER SERVICE",
+        specialDesc: "Summons 2 pompous waiters who march in and serve platter strikes.",
+        special: { startup: 0.30, active: 0.10, recovery: 0.40, damage: 0, knockback: 0, range: 0, height: 0, projectile: 'waiters' },
         spriteKey: 'slug_sprite',
         spriteDefaultFacing: -1,  // cards on viewer's left = faces LEFT
         bodyW: 82,    // heavyset, wider stance
@@ -215,7 +216,7 @@ const BOSS_DATA = {
     spamWall:   { startup: 0.40, active: 0.10, recovery: 0.30, damage: 12, projectile: 'wall', name: 'spamWall' }
 };
 
-// Projectiles (mets tweets, slug tickets, etc)
+// Projectiles (mets tweets, slug tickets, question marks, etc)
 let projectiles = [];
 // Foodpic AOE markers (visual warnings)
 let aoeMarkers = [];
@@ -223,6 +224,10 @@ let aoeMarkers = [];
 let floatingTexts = [];
 // Particle effects (hit sparks)
 let particles = [];
+// Generic White's Puerto Rican flag sweep attack (single active at a time)
+let flagAttack = null;
+// Slug's summoned waiters (multiple at once possible)
+let waiters = [];
 
 // =====================================================================
 // SHOP
@@ -411,6 +416,8 @@ function startFight() {
     aoeMarkers = [];
     floatingTexts = [];
     particles = [];
+    flagAttack = null;
+    waiters = [];
     hitStopTimer = 0;
     shakeTimer = 0;
     player.comboCount = 0;
@@ -457,25 +464,84 @@ function trySpecial() {
     f.attackTimer = player.data.special.startup;
     f.hasHitThisAttack = false;
     sfx('special');
-    if (player.data.special.projectile === 'tickets') {
-        // spawn 3 tickets after startup
+    const startupMs = player.data.special.startup * 1000;
+    const proj = player.data.special.projectile;
+
+    if (proj === 'questions') {
+        // LADDER MAN: 3 giant question marks fired at the boss
         setTimeout(() => {
             if (gameState !== STATE.FIGHT) return;
-            const baseX = f.x + f.facing * 40;
-            const baseY = f.y - f.h/2;
-            for (let i = -1; i <= 1; i++) {
-                projectiles.push({
-                    type: 'ticket',
-                    x: baseX, y: baseY,
-                    vx: f.facing * 550,
-                    vy: i * 180,
-                    damage: 12,
-                    owner: 'player',
-                    life: 2.0,
-                    spin: 0
-                });
+            chatPush('sys', 'Ladder Man: ???');
+            for (let i = 0; i < 3; i++) {
+                setTimeout(() => {
+                    if (gameState !== STATE.FIGHT) return;
+                    const baseX = f.x + f.facing * 40;
+                    const baseY = f.y - f.h * 0.6;
+                    const target = boss.fighter;
+                    const targetX = target.x;
+                    const targetY = target.y - target.h * 0.5;
+                    const dx = targetX - baseX;
+                    const dy = targetY - baseY + (i - 1) * 30;
+                    const dist = Math.hypot(dx, dy);
+                    projectiles.push({
+                        type: 'question',
+                        x: baseX, y: baseY,
+                        vx: (dx / dist) * 750,
+                        vy: (dy / dist) * 750,
+                        damage: 14,
+                        owner: 'player',
+                        life: 2.0,
+                        spin: 0
+                    });
+                    sfx('parry');
+                }, i * 130);
             }
-        }, player.data.special.startup * 1000);
+        }, startupMs);
+    } else if (proj === 'flag') {
+        // GENERIC WHITE: unfurl Puerto Rican flag and sweep boss
+        setTimeout(() => {
+            if (gameState !== STATE.FIGHT) return;
+            chatPush('sys', 'Generic White unfurls the flag');
+            flagAttack = {
+                x: f.x + f.facing * 30,
+                y: f.y - f.h - 10,
+                vx: f.facing * 520,
+                width: 0,            // grows from 0 to maxWidth during unfurl
+                maxWidth: 320,
+                height: 200,
+                life: 1.4,
+                phase: 'unfurl',     // unfurl -> sweep -> fade
+                phaseTimer: 0.25,
+                hasHitBoss: false,
+                facing: f.facing,
+                wavePhase: 0,
+                damage: 45,
+                knockback: 520
+            };
+        }, startupMs);
+    } else if (proj === 'waiters') {
+        // SLUG: summon 2 pompous waiters
+        setTimeout(() => {
+            if (gameState !== STATE.FIGHT) return;
+            chatPush('sys', 'Slug summons the staff');
+            for (let i = 0; i < 2; i++) {
+                setTimeout(() => {
+                    if (gameState !== STATE.FIGHT) return;
+                    const fromLeft = i === 0;
+                    waiters.push({
+                        x: fromLeft ? -100 : GW + 100,
+                        y: FLOOR_Y,
+                        targetX: boss.fighter.x + (fromLeft ? -130 : 130),
+                        facing: fromLeft ? 1 : -1,
+                        state: 'walking',   // walking -> serving -> leaving
+                        stateTimer: 0,
+                        hasServed: false,
+                        bobPhase: Math.random() * Math.PI * 2,
+                        damage: 22
+                    });
+                }, i * 250);
+            }
+        }, startupMs);
     }
     floatingTexts.push({ x: f.x, y: f.y - 200, text: player.data.specialName, color: '#fada30', life: 1.5 });
 }
@@ -511,6 +577,8 @@ function update(dt) {
     updateComboTimer(dt);
     updateChatTimers(dt);
     updateDJ(dt);
+    updateFlagAttack(dt);
+    updateWaiters(dt);
     // win/lose check
     if (boss.fighter.hp <= 0 && gameState === STATE.FIGHT) {
         boss.fighter.hp = 0;
@@ -1049,6 +1117,126 @@ function updateDJ(dt) {
     djBobPhase += dt * (boss.phase === 2 ? 6.5 : 4.5);
 }
 
+function updateFlagAttack(dt) {
+    if (!flagAttack) return;
+    flagAttack.life -= dt;
+    flagAttack.phaseTimer -= dt;
+    flagAttack.wavePhase += dt * 8;
+
+    if (flagAttack.phase === 'unfurl') {
+        // Grow the flag width over 0.25s
+        flagAttack.width = Math.min(flagAttack.maxWidth, flagAttack.maxWidth * (1 - flagAttack.phaseTimer / 0.25));
+        if (flagAttack.phaseTimer <= 0) {
+            flagAttack.phase = 'sweep';
+            flagAttack.phaseTimer = 0.7;
+        }
+    } else if (flagAttack.phase === 'sweep') {
+        // Move forward across screen
+        flagAttack.x += flagAttack.vx * dt;
+        if (flagAttack.phaseTimer <= 0) {
+            flagAttack.phase = 'fade';
+            flagAttack.phaseTimer = 0.45;
+        }
+    } else if (flagAttack.phase === 'fade') {
+        // Slow + fade
+        flagAttack.x += flagAttack.vx * dt * 0.3;
+    }
+
+    // Hit check on boss (once)
+    if (!flagAttack.hasHitBoss) {
+        const fx = flagAttack.x;
+        const fLeft = flagAttack.facing > 0 ? fx : fx - flagAttack.width;
+        const fRight = flagAttack.facing > 0 ? fx + flagAttack.width : fx;
+        const fTop = flagAttack.y;
+        const fBot = flagAttack.y + flagAttack.height;
+        const b = boss.fighter;
+        if (b.x > fLeft && b.x < fRight && (b.y - b.h) < fBot && b.y > fTop - 20) {
+            flagAttack.hasHitBoss = true;
+            boss.fighter.hp -= flagAttack.damage;
+            boss.fighter.hitFlash = 0.4;
+            boss.fighter.hitTimer = 0.6;
+            boss.fighter.vx = flagAttack.facing * flagAttack.knockback;
+            boss.fighter.vy = -350;
+            boss.fighter.onGround = false;
+            boss.fighter.attackPhase = 'none';
+            boss.fighter.attackType = null;
+            boss.fighter.attackData = null;
+            boss.attackToken = (boss.attackToken || 0) + 1;
+            sfx('hit_heavy');
+            addShake(18, 0.4);
+            addHitStop(0.08);
+            spawnParticles(b.x, b.y - b.h/2, '#fff', 14);
+            spawnParticles(b.x, b.y - b.h/2, '#c41818', 14);
+            spawnParticles(b.x, b.y - b.h/2, '#1a4aff', 14);
+            floatingTexts.push({ x: b.x, y: b.y - 200, text: 'BORICUA!', color: '#fada30', life: 1.6 });
+            floatingTexts.push({ x: b.x, y: b.y - 160, text: `-${flagAttack.damage}`, color: '#ff5a5a', life: 1.2 });
+            if (boss.fighter.hp <= 0) {
+                boss.fighter.hp = 0;
+                gameState = STATE.WIN;
+                stopBossMusic();
+                sfx('win');
+            }
+        }
+    }
+
+    if (flagAttack.life <= 0) flagAttack = null;
+}
+
+function updateWaiters(dt) {
+    for (const w of waiters) {
+        w.bobPhase += dt * 6;
+        if (w.state === 'walking') {
+            const dx = w.targetX - w.x;
+            const dist = Math.abs(dx);
+            if (dist < 8) {
+                w.state = 'serving';
+                w.stateTimer = 0.6;
+                w.x = w.targetX;
+            } else {
+                w.x += Math.sign(dx) * 280 * dt;
+                w.facing = Math.sign(dx);
+            }
+        } else if (w.state === 'serving') {
+            w.stateTimer -= dt;
+            if (w.stateTimer <= 0.3 && !w.hasServed) {
+                w.hasServed = true;
+                // Apply platter hit on boss
+                const dxToBoss = Math.abs(boss.fighter.x - w.x);
+                if (dxToBoss < 220) {
+                    boss.fighter.hp -= w.damage;
+                    boss.fighter.hitFlash = 0.3;
+                    boss.fighter.hitTimer = 0.4;
+                    boss.fighter.vx = (boss.fighter.x > w.x ? 1 : -1) * 350;
+                    boss.fighter.attackPhase = 'none';
+                    boss.fighter.attackType = null;
+                    boss.fighter.attackData = null;
+                    boss.attackToken = (boss.attackToken || 0) + 1;
+                    sfx('hit_heavy');
+                    addShake(10, 0.2);
+                    spawnParticles(boss.fighter.x, boss.fighter.y - boss.fighter.h/2, '#cccccc', 12);
+                    floatingTexts.push({ x: boss.fighter.x + (Math.random()-0.5)*40, y: boss.fighter.y - 140, text: `-${w.damage}`, color: '#fff', life: 1.0 });
+                    if (boss.fighter.hp <= 0) {
+                        boss.fighter.hp = 0;
+                        gameState = STATE.WIN;
+                        stopBossMusic();
+                        sfx('win');
+                    }
+                }
+            }
+            if (w.stateTimer <= 0) {
+                w.state = 'leaving';
+                w.facing = w.x < GW / 2 ? -1 : 1;
+            }
+        } else if (w.state === 'leaving') {
+            w.x += w.facing * 320 * dt;
+            if (w.x < -120 || w.x > GW + 120) {
+                w.life = 0;  // mark for removal
+            }
+        }
+    }
+    waiters = waiters.filter(w => w.life !== 0);
+}
+
 function updateChatTimers(dt) {
     mLineTimer -= dt;
     if (mLineTimer <= 0) {
@@ -1324,6 +1512,10 @@ function renderFight() {
     drawFighter(player.fighter, player.data ? player.data.spriteKey : null, 'player');
     // Projectiles
     projectiles.forEach(drawProjectile);
+    // Waiters (in front of background, behind fighters? render above floor for clarity)
+    waiters.forEach(drawWaiter);
+    // Flag attack (over everything)
+    drawFlagAttack();
     // Particles
     particles.forEach(p => {
         ctx.fillStyle = p.color;
@@ -1475,6 +1667,26 @@ function drawFighter(f, spriteKey, who) {
 }
 
 function drawProjectile(p) {
+    if (p.type === 'question') {
+        // Ladder Man's "???" - giant glowing yellow question marks
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(Math.sin(p.spin) * 0.3);  // wobble
+        // Glow
+        ctx.shadowColor = '#fada30';
+        ctx.shadowBlur = 24;
+        ctx.fillStyle = '#fada30';
+        ctx.font = 'bold 64px Georgia';
+        ctx.textAlign = 'center';
+        ctx.fillText('?', 0, 18);
+        ctx.shadowBlur = 0;
+        // Outline pass for crisp edge
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 3;
+        ctx.strokeText('?', 0, 18);
+        ctx.restore();
+        return;
+    }
     const imgKey = p.type === 'ticket' ? null : 'spam_' + p.type;
     if (p.type === 'ticket') {
         ctx.save();
@@ -1571,6 +1783,108 @@ function drawDJBooth() {
     ctx.font = 'bold 11px Georgia';
     ctx.textAlign = 'center';
     ctx.fillText('DJ PLAN B', x + w / 2, y + h - 6);
+}
+
+function drawFlagAttack() {
+    if (!flagAttack) return;
+    const F = flagAttack;
+    const alpha = F.life < 0.4 ? Math.max(0, F.life / 0.4) : 1;
+    const w = F.width;
+    const h = F.height;
+    const facing = F.facing;
+    // Flag origin: left edge if facing right, right edge if facing left
+    const ox = F.x;
+    const oy = F.y;
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+
+    // Pole (a vertical staff at the origin edge)
+    ctx.fillStyle = '#5a3818';
+    ctx.fillRect(ox - 4, oy - 20, 8, h + 30);
+    ctx.fillStyle = '#fada30';
+    ctx.fillRect(ox - 6, oy - 26, 12, 8);
+
+    // Draw the flag as 5 horizontal stripes with sine-wave displacement to look like it's waving.
+    // Stripe colors top to bottom: red, white, red, white, red.
+    const stripeColors = ['#c41a1a', '#ffffff', '#c41a1a', '#ffffff', '#c41a1a'];
+    const stripeH = h / 5;
+    // Horizontal cells - finer cells = smoother wave
+    const cells = 16;
+    const cellW = w / cells;
+    for (let s = 0; s < 5; s++) {
+        ctx.fillStyle = stripeColors[s];
+        for (let c = 0; c < cells; c++) {
+            const xOff = facing * c * cellW;
+            const wave = Math.sin(F.wavePhase + c * 0.6) * 8 * (c / cells);  // amplitude grows toward free end
+            ctx.fillRect(ox + xOff, oy + s * stripeH + wave, cellW + 1, stripeH + 1);
+        }
+    }
+
+    // Blue triangle on the pole-side (left when facing right, right when facing left), point toward center
+    ctx.fillStyle = '#0050aa';
+    ctx.beginPath();
+    if (facing > 0) {
+        ctx.moveTo(ox, oy);
+        ctx.lineTo(ox, oy + h);
+        ctx.lineTo(ox + h * 0.5, oy + h / 2);
+    } else {
+        ctx.moveTo(ox, oy);
+        ctx.lineTo(ox, oy + h);
+        ctx.lineTo(ox - h * 0.5, oy + h / 2);
+    }
+    ctx.closePath();
+    ctx.fill();
+
+    // White 5-pointed star in the triangle
+    const starCx = ox + facing * h * 0.18;
+    const starCy = oy + h / 2;
+    const starR = h * 0.13;
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    for (let i = 0; i < 10; i++) {
+        const ang = -Math.PI / 2 + (i * Math.PI) / 5;
+        const r = i % 2 === 0 ? starR : starR * 0.4;
+        const px = starCx + Math.cos(ang) * r;
+        const py = starCy + Math.sin(ang) * r;
+        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.restore();
+}
+
+function drawWaiter(w) {
+    const sprite = IMAGES.waiter_sprite;
+    const bob = Math.abs(Math.sin(w.bobPhase)) * (w.state === 'walking' || w.state === 'leaving' ? -6 : -2);
+    const drawH = 180;
+    if (sprite && sprite.loaded) {
+        const img = sprite.img;
+        const aspect = img.width / img.height;
+        const drawW = drawH * aspect;
+        ctx.save();
+        ctx.translate(w.x, w.y + bob);
+        // Waiter sprite faces left by default (platter on viewer's left). Flip to face right.
+        if (w.facing > 0) ctx.scale(-1, 1);
+        ctx.drawImage(img, -drawW / 2, -drawH, drawW, drawH);
+        ctx.restore();
+        // Serving "BAM!" flash
+        if (w.state === 'serving' && w.stateTimer < 0.4 && w.hasServed === false) {
+            ctx.fillStyle = `rgba(255, 240, 200, ${0.6 - w.stateTimer})`;
+            ctx.beginPath();
+            ctx.arc(w.x + w.facing * 60, w.y - 130, 30, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    } else {
+        // Fallback - dark figure with silver disk
+        ctx.fillStyle = '#0a0a0a';
+        ctx.fillRect(w.x - 20, w.y - 130, 40, 130);
+        ctx.fillStyle = '#cccccc';
+        ctx.beginPath();
+        ctx.arc(w.x + w.facing * 28, w.y - 130, 18, 0, Math.PI * 2);
+        ctx.fill();
+    }
 }
 
 function drawHUD() {
