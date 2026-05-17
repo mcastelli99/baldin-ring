@@ -403,7 +403,7 @@ const AGGROCRAIG_JETS_LINES = [
     "The Jets are SUPER BOWL bound",
     "JETS JETS JETS",
     "THIS is the year",
-    "Wait til you see the DRAFT"
+    "TANK FOR ARCH"
 ];
 
 // Stage progression state
