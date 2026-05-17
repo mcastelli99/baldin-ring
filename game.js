@@ -699,41 +699,61 @@ function startBossFight() {
     gameState = STATE.FIGHT;
 }
 
-// Revival sequence - after player defeats Evil Bald in phase 1, he revives cloaked + summons MtG cards
+// MtG creature card templates - each one has its own stats + behavior
+const MTG_CREATURE_TYPES = [
+    { name: 'LIGHTNING BOLT',  color: '#c41818', hp: 4,  damage: 6,  speed: 200, ai: 'ranged_zap',  bossDmgOnKill: 14 },
+    { name: 'COUNTERSPELL',    color: '#3a5aff', hp: 8,  damage: 7,  speed: 110, ai: 'melee',       bossDmgOnKill: 16 },
+    { name: 'SOL RING',        color: '#aa7800', hp: 6,  damage: 5,  speed: 180, ai: 'melee_fast',  bossDmgOnKill: 12 },
+    { name: 'BLACK LOTUS',     color: '#1a1a1a', hp: 12, damage: 10, speed: 75,  ai: 'melee_heavy', bossDmgOnKill: 22 },
+    { name: 'GIANT SPIDER',    color: '#5a2a4a', hp: 7,  damage: 8,  speed: 140, ai: 'melee',       bossDmgOnKill: 14 },
+    { name: 'SHIVAN DRAGON',   color: '#c44818', hp: 14, damage: 12, speed: 90,  ai: 'melee_heavy', bossDmgOnKill: 24 }
+];
+
+// Revival sequence - boss floats up cloaked + endlessly summons MtG creatures.
+// Player damages boss ONLY by killing creatures (not by hitting boss directly).
 function triggerEvilBaldRevive() {
     boss.revived = true;
     boss.cloaked = true;
-    boss.reviveTimer = 2.4;     // cinematic banner duration
+    boss.reviveTimer = 2.4;
     boss.phase = 3;
-    boss.fighter.hp = 110;
-    boss.fighter.maxHp = 110;
+    boss.fighter.hp = 140;          // killed-by-creature-deaths HP pool
+    boss.fighter.maxHp = 140;
     boss.fighter.state = 'idle';
     boss.fighter.hitTimer = 0;
     boss.fighter.attackPhase = 'none';
+    boss.fighter.onGround = false;
+    boss.fighter.vy = 0;
     boss.attackToken = (boss.attackToken || 0) + 1;
+    boss.hoverY = FLOOR_Y - 380;    // floating position high above the arena
+    boss.fighter.y = boss.hoverY;
+    boss.cardSpawnTimer = 1.5;      // first creature appears after the banner
+    boss.cards = [];                // active MtG creatures
     addShake(20, 1.2);
     sfx('parry');
     chatPush('sys', '!! HE IS NOT DONE !!');
     chatPush('bald', 'one more thing');
-    // Spawn 4 MtG cards on the ground between player and boss (so they block the path)
-    const cx = boss.fighter.x;
-    const cardNames = ['LIGHTNING BOLT', 'COUNTERSPELL', 'SOL RING', 'BLACK LOTUS'];
-    const cardColors = ['#c41818', '#3a5aff', '#aa7800', '#1a1a1a'];
-    boss.cards = [];
-    for (let i = 0; i < 4; i++) {
-        boss.cards.push({
-            x: cx - 250 + i * 80,
-            y: FLOOR_Y,                  // feet position (cards stand on ground like obstacles)
-            w: 70, h: 130,
-            hp: 10,
-            maxHp: 10,
-            name: cardNames[i],
-            color: cardColors[i],
-            bobPhase: i * 0.8,
-            hitFlash: 0,
-            destroyed: false
-        });
-    }
+}
+
+function spawnMtgCreature() {
+    const t = MTG_CREATURE_TYPES[Math.floor(Math.random() * MTG_CREATURE_TYPES.length)];
+    boss.cards.push({
+        ...t,
+        x: boss.fighter.x + (Math.random() - 0.5) * 140,
+        y: boss.fighter.y + 30,        // spawn from below boss
+        vy: 60 + Math.random() * 40,
+        vx: (Math.random() - 0.5) * 80,
+        w: 60, h: 110,
+        landed: false,
+        facing: -1,
+        maxHp: t.hp,
+        bobPhase: Math.random() * Math.PI * 2,
+        hitFlash: 0,
+        hitTimer: 0,
+        destroyed: false,
+        attackTimer: 1.0 + Math.random() * 0.5,
+        legPhase: Math.random() * Math.PI * 2
+    });
+    sfx('parry');
 }
 
 // =====================================================================
@@ -1120,18 +1140,21 @@ function update(dt) {
     // win/lose check
     if (boss.fighter.hp <= 0 && gameState === STATE.FIGHT) {
         boss.fighter.hp = 0;
-        // First defeat -> revive cloaked + summon MtG cards before round 2
         if (!boss.revived) {
+            // First defeat -> trigger revive phase
             triggerEvilBaldRevive();
         } else {
-            // Final defeat
-            addShake(20, 1.0);
+            // Final defeat (after revive phase - means all creatures killed enough to drop boss)
+            addShake(25, 1.2);
             sfx('ko');
             sfx('win');
             chatPush('bald', 'rude');
             chatPush('sys', 'Evil Bald is offline FOR GOOD');
             stopBossMusic();
-            setTimeout(() => { if (gameState === STATE.FIGHT) gameState = STATE.WIN; }, 600);
+            // Big death effect
+            spawnParticles(boss.fighter.x, boss.fighter.y - 60, '#ff3030', 30);
+            spawnParticles(boss.fighter.x, boss.fighter.y - 60, '#fada30', 20);
+            setTimeout(() => { if (gameState === STATE.FIGHT) gameState = STATE.WIN; }, 800);
         }
     }
     if (player.fighter.hp <= 0 && gameState === STATE.FIGHT) {
@@ -1496,6 +1519,24 @@ function onHit(attacker, defender, attackData, attackerIsBoss) {
 // =====================================================================
 function updateBossAI(dt) {
     const f = boss.fighter;
+    // REVIVED PHASE - boss hovers and endlessly summons MtG creatures. No conventional attacks.
+    if (boss.revived) {
+        // Force-hover at fixed Y
+        f.y = boss.hoverY + Math.sin(Date.now() / 600) * 18;
+        f.vy = 0;
+        f.onGround = false;
+        f.vx *= 0.85;
+        // Cap active creatures so screen isn't completely flooded
+        const aliveCount = boss.cards.filter(c => !c.destroyed).length;
+        boss.cardSpawnTimer -= dt;
+        if (boss.cardSpawnTimer <= 0 && aliveCount < 5) {
+            spawnMtgCreature();
+            boss.cardSpawnTimer = 1.4 + Math.random() * 1.0;
+        }
+        // Boss face the player
+        f.facing = player.fighter.x > f.x ? 1 : -1;
+        return;
+    }
     if (f.hitTimer > 0 || f.attackPhase !== 'none') {
         boss.aiTimer = 0.6 + Math.random() * 0.4;
         return;
@@ -2291,11 +2332,80 @@ function updateBossCards(dt) {
         if (c.destroyed) continue;
         c.bobPhase += dt * 1.5;
         if (c.hitFlash > 0) c.hitFlash -= dt;
+        if (c.hitTimer > 0) {
+            c.hitTimer -= dt;
+            c.x += c.vx * dt;
+            c.vx *= 0.85;
+            continue;
+        }
+        // Falling phase - creature drops from boss to ground
+        if (!c.landed) {
+            c.vy += 600 * dt;
+            c.x += c.vx * dt;
+            c.y += c.vy * dt;
+            c.vx *= 0.96;
+            if (c.y >= FLOOR_Y) {
+                c.y = FLOOR_Y;
+                c.vy = 0;
+                c.landed = true;
+                spawnParticles(c.x, FLOOR_Y, '#8a6a28', 8);
+                sfx('hit_light');
+            }
+            continue;
+        }
+        // Landed - walk toward player + attack
+        c.legPhase += dt * (Math.abs(c.vx) > 10 ? 8 : 0);
+        const dx = player.fighter.x - c.x;
+        const dist = Math.abs(dx);
+        c.facing = dx < 0 ? -1 : 1;
+        c.attackTimer -= dt;
+
+        if (c.ai === 'ranged_zap') {
+            // Lightning Bolt - stay at medium range, fire zap projectiles
+            const ideal = 260;
+            if (dist > ideal + 50) { c.vx = Math.sign(dx) * c.speed; }
+            else if (dist < ideal - 60) { c.vx = -Math.sign(dx) * c.speed * 0.7; }
+            else { c.vx = 0; }
+            if (c.attackTimer <= 0) {
+                projectiles.push({
+                    type: 'zap',
+                    x: c.x + c.facing * 20, y: c.y - c.h * 0.6,
+                    vx: c.facing * 600, vy: -60,
+                    damage: c.damage,
+                    owner: 'boss', life: 1.6, spin: 0
+                });
+                sfx('parry');
+                c.attackTimer = 1.6;
+            }
+        } else if (c.ai === 'melee' || c.ai === 'melee_fast' || c.ai === 'melee_heavy') {
+            // Walk toward player and bash on contact
+            const reach = c.ai === 'melee_heavy' ? 80 : 60;
+            if (dist > reach - 10) { c.vx = Math.sign(dx) * c.speed; }
+            else {
+                c.vx = 0;
+                if (c.attackTimer <= 0 && player.fighter.invuln <= 0 && player.fighter.hitTimer <= 0) {
+                    const blocked = player.fighter.state === 'blocking';
+                    const dmg = blocked ? Math.ceil(c.damage * 0.40) : c.damage;
+                    player.fighter.hp -= dmg;
+                    player.fighter.hitTimer = 0.25;
+                    player.fighter.vx = -Math.sign(dx) * (blocked ? 100 : 250);
+                    player.fighter.hitFlash = 0.25;
+                    sfx(blocked ? 'block' : 'damage');
+                    addShake(blocked ? 3 : 6, 0.15);
+                    floatingTexts.push({ x: player.fighter.x, y: player.fighter.y - 130, text: blocked ? `BLOCK -${dmg}` : `-${dmg}`, color: blocked ? '#fada30' : '#ff5a5a', life: 0.9 });
+                    c.attackTimer = c.ai === 'melee_fast' ? 1.0 : 1.5;
+                }
+            }
+        }
+        c.x += c.vx * dt;
+        if (c.x < 50) c.x = 50;
+        if (c.x > LEVEL_END - 50) c.x = LEVEL_END - 50;
     }
     boss.cards = boss.cards.filter(c => !(c.destroyed && c.hitFlash <= 0));
 }
 
-// Tries to hit a boss-card with a player attack. Returns true if a card was hit.
+// Tries to hit a boss-creature with a player attack. Returns true if a creature was hit.
+// Each creature kill ALSO damages the boss directly (this is how you defeat him in revive phase).
 function tryHitBossCard(hitX, hitY, dmg, srcFacing) {
     if (!boss.cards || boss.cards.length === 0) return false;
     for (const c of boss.cards) {
@@ -2303,28 +2413,37 @@ function tryHitBossCard(hitX, hitY, dmg, srcFacing) {
         const yBob = Math.sin(c.bobPhase) * 4;
         const left = c.x - c.w / 2;
         const right = c.x + c.w / 2;
-        const top = c.y - c.h + yBob;     // y is feet position, height extends up
+        const top = c.y - c.h + yBob;
         const bot = c.y + yBob;
         if (hitX > left && hitX < right && hitY > top && hitY < bot) {
             c.hp -= dmg;
             c.hitFlash = 0.3;
+            c.hitTimer = 0.18;
+            c.vx = srcFacing * 180;
             sfx('hit_light');
-            spawnParticles(c.x, c.y + yBob, c.color, 6);
-            floatingTexts.push({ x: c.x, y: c.y + yBob - 30, text: `-${Math.round(dmg)}`, color: '#fff', life: 0.8 });
+            spawnParticles(c.x, c.y - c.h * 0.5 + yBob, c.color, 6);
+            floatingTexts.push({ x: c.x, y: c.y - c.h + yBob - 8, text: `-${Math.round(dmg)}`, color: '#fff', life: 0.7 });
             if (c.hp <= 0) {
                 c.destroyed = true;
-                spawnParticles(c.x, c.y + yBob, c.color, 24);
-                spawnParticles(c.x, c.y + yBob, '#fada30', 16);
+                spawnParticles(c.x, c.y - c.h * 0.5 + yBob, c.color, 26);
+                spawnParticles(c.x, c.y - c.h * 0.5 + yBob, '#fada30', 18);
                 sfx('hit_heavy');
                 addShake(8, 0.2);
-                chatPush('sys', `Card destroyed: ${c.name}`);
-                floatingTexts.push({ x: c.x, y: c.y + yBob - 50, text: `${c.name} DESTROYED`, color: c.color, life: 1.6 });
-                // If all cards destroyed, boss becomes vulnerable
-                const stillUp = boss.cards.filter(cc => !cc.destroyed).length;
-                if (stillUp === 0) {
-                    chatPush('sys', '!! WARD BROKEN - EVIL BALD VULNERABLE !!');
-                    floatingTexts.push({ x: boss.fighter.x, y: boss.fighter.y - 220, text: 'WARD BROKEN', color: '#ff5a5a', life: 2.0 });
-                    addShake(12, 0.4);
+                chatPush('sys', `${c.name} destroyed (-${c.bossDmgOnKill || 10} to Evil Bald)`);
+                floatingTexts.push({ x: c.x, y: c.y - c.h + yBob - 40, text: `${c.name} DESTROYED`, color: c.color, life: 1.6 });
+                // Damage the boss DIRECTLY when a creature dies
+                if (boss.fighter && boss.revived) {
+                    const bossDmg = c.bossDmgOnKill || 10;
+                    boss.fighter.hp -= bossDmg;
+                    boss.fighter.hitFlash = 0.3;
+                    floatingTexts.push({ x: boss.fighter.x, y: boss.fighter.y - 180, text: `-${bossDmg}`, color: '#ff5a5a', life: 1.0 });
+                    // Lightning bolt links creature to boss visually
+                    spawnParticles(boss.fighter.x, boss.fighter.y - 60, '#ff5a5a', 10);
+                    if (boss.fighter.hp <= 0) {
+                        boss.fighter.hp = 0;
+                        chatPush('sys', '!! EVIL BALD FALLS !!');
+                        // The fight-end check in update() will pick this up and trigger WIN
+                    }
                 }
             }
             return true;
@@ -3019,6 +3138,21 @@ function drawProjectile(p) {
         ctx.fillStyle = `rgba(80, 60, 30, ${Math.min(0.7, p.life * 0.5)})`;
         ctx.beginPath(); ctx.arc(6, 4, 14, 0, Math.PI * 2); ctx.fill();
         ctx.beginPath(); ctx.arc(-7, 2, 12, 0, Math.PI * 2); ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.restore();
+        return;
+    }
+    if (p.type === 'zap') {
+        // Lightning Bolt creature's electric arc
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.strokeStyle = '#fada30';
+        ctx.shadowColor = '#fa3030';
+        ctx.shadowBlur = 14;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(-18, -4); ctx.lineTo(-4, 0); ctx.lineTo(-12, 4); ctx.lineTo(0, 0); ctx.lineTo(-6, -4); ctx.lineTo(18, 0);
+        ctx.stroke();
         ctx.shadowBlur = 0;
         ctx.restore();
         return;
@@ -3763,58 +3897,128 @@ function drawBossCloak() {
 function drawBossCards() {
     for (const c of boss.cards) {
         if (c.destroyed) continue;
-        const yBob = Math.sin(c.bobPhase) * 5;
-        const cardX = c.x;
-        const cardY = c.y - c.h / 2 + yBob;
+        const yBob = c.landed ? Math.sin(c.bobPhase) * 2 : Math.sin(c.bobPhase) * 5;
+        const topY = c.y - c.h + yBob;
+
+        // Lightning trail when boss summons / damages connect visually
         ctx.save();
         // Hit flash
         if (c.hitFlash > 0) {
             ctx.fillStyle = `rgba(255, 255, 255, ${c.hitFlash * 2})`;
-            ctx.fillRect(cardX - c.w / 2 - 4, c.y - c.h + yBob - 4, c.w + 8, c.h + 8);
+            ctx.fillRect(c.x - c.w / 2 - 4, topY - 4, c.w + 8, c.h + 8);
         }
-        // Card back (tarnished gold border)
+        // Card frame
         ctx.fillStyle = '#1a0a08';
-        ctx.fillRect(cardX - c.w / 2, c.y - c.h + yBob, c.w, c.h);
+        ctx.fillRect(c.x - c.w / 2, topY, c.w, c.h);
         ctx.strokeStyle = '#aa8838';
-        ctx.lineWidth = 3;
-        ctx.strokeRect(cardX - c.w / 2, c.y - c.h + yBob, c.w, c.h);
+        ctx.lineWidth = 2;
+        ctx.strokeRect(c.x - c.w / 2, topY, c.w, c.h);
         // Title bar
         ctx.fillStyle = '#2a1810';
-        ctx.fillRect(cardX - c.w / 2 + 4, c.y - c.h + yBob + 4, c.w - 8, 14);
+        ctx.fillRect(c.x - c.w / 2 + 3, topY + 3, c.w - 6, 12);
         ctx.fillStyle = '#fada30';
-        ctx.font = 'bold 8px Georgia';
+        ctx.font = 'bold 7px Georgia';
         ctx.textAlign = 'center';
-        ctx.fillText(c.name, cardX, c.y - c.h + yBob + 14);
-        // Art box (colored window mimicking MtG art frame)
+        ctx.fillText(c.name, c.x, topY + 12);
+        // Art window
         ctx.fillStyle = c.color;
-        ctx.fillRect(cardX - c.w / 2 + 4, c.y - c.h + yBob + 22, c.w - 8, c.h * 0.45);
-        // Simple sigil inside the art area
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
-        ctx.beginPath();
-        ctx.arc(cardX, c.y - c.h + yBob + 22 + c.h * 0.45 / 2, 12, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.fillRect(c.x - c.w / 2 + 3, topY + 18, c.w - 6, c.h * 0.5);
+        // Iconic shape inside art area depending on creature type
+        ctx.save();
+        ctx.translate(c.x, topY + 18 + c.h * 0.25);
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
+        if (c.name === 'LIGHTNING BOLT') {
+            // Zigzag bolt
+            ctx.beginPath();
+            ctx.moveTo(-3, -15); ctx.lineTo(4, -3); ctx.lineTo(-2, -1); ctx.lineTo(4, 14); ctx.lineTo(-2, 4); ctx.lineTo(3, 2);
+            ctx.closePath(); ctx.fill();
+        } else if (c.name === 'SOL RING') {
+            // Ring shape
+            ctx.beginPath(); ctx.arc(0, 0, 12, 0, Math.PI * 2); ctx.stroke();
+            ctx.strokeStyle = '#fff'; ctx.lineWidth = 4;
+            ctx.beginPath(); ctx.arc(0, 0, 9, 0, Math.PI * 2); ctx.stroke();
+        } else if (c.name === 'BLACK LOTUS') {
+            // 5-petal flower
+            for (let p = 0; p < 5; p++) {
+                ctx.save();
+                ctx.rotate((p / 5) * Math.PI * 2);
+                ctx.beginPath();
+                ctx.ellipse(0, -8, 4, 10, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        } else if (c.name === 'COUNTERSPELL') {
+            // Spiral
+            ctx.beginPath();
+            for (let a = 0; a < Math.PI * 4; a += 0.2) {
+                const r = a * 1.2;
+                if (a === 0) ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r);
+                else ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+            }
+            ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+        } else if (c.name === 'SHIVAN DRAGON') {
+            // Dragon-ish triangle
+            ctx.beginPath();
+            ctx.moveTo(-10, 8); ctx.lineTo(10, 8); ctx.lineTo(0, -12);
+            ctx.closePath(); ctx.fill();
+            ctx.fillStyle = '#1a0808';
+            ctx.fillRect(-3, -3, 6, 4);
+        } else {
+            // Generic spider/creature - X with legs
+            ctx.beginPath();
+            for (let leg = 0; leg < 8; leg++) {
+                const a = (leg / 8) * Math.PI * 2;
+                ctx.moveTo(0, 0); ctx.lineTo(Math.cos(a) * 10, Math.sin(a) * 10);
+            }
+            ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+            ctx.beginPath(); ctx.arc(0, 0, 4, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.restore();
         // Type line
         ctx.fillStyle = '#2a1810';
-        ctx.fillRect(cardX - c.w / 2 + 4, c.y - c.h + yBob + 22 + c.h * 0.45 + 2, c.w - 8, 10);
+        ctx.fillRect(c.x - c.w / 2 + 3, topY + 18 + c.h * 0.5 + 2, c.w - 6, 9);
         ctx.fillStyle = '#fada30';
-        ctx.font = '7px Georgia';
-        ctx.fillText('Instant', cardX, c.y - c.h + yBob + 22 + c.h * 0.45 + 9);
-        // HP bar above the card
-        const barW = c.w - 10;
+        ctx.font = '6px Georgia';
+        ctx.fillText('Creature', c.x, topY + 18 + c.h * 0.5 + 8);
+        // Legs poking out the bottom (animated when walking)
+        if (c.landed) {
+            ctx.fillStyle = '#3a1a08';
+            const stepL = Math.sin(c.legPhase) * 4;
+            const stepR = -stepL;
+            ctx.fillRect(c.x - c.w / 2 + 8, c.y + yBob - 4, 6, 8 + stepL);
+            ctx.fillRect(c.x + c.w / 2 - 14, c.y + yBob - 4, 6, 8 + stepR);
+            // Tiny eyes that face the player
+            ctx.fillStyle = '#ff3030';
+            const eyeOffX = c.facing * 6;
+            ctx.fillRect(c.x - 8 + eyeOffX, topY + 25, 3, 3);
+            ctx.fillRect(c.x + 4 + eyeOffX, topY + 25, 3, 3);
+        }
+        // HP bar
+        const barW = c.w - 6;
         ctx.fillStyle = '#000';
-        ctx.fillRect(cardX - barW / 2 - 1, c.y - c.h + yBob - 12, barW + 2, 5);
+        ctx.fillRect(c.x - barW / 2 - 1, topY - 10, barW + 2, 5);
         ctx.fillStyle = '#c41818';
-        ctx.fillRect(cardX - barW / 2, c.y - c.h + yBob - 11, barW * (c.hp / c.maxHp), 3);
+        ctx.fillRect(c.x - barW / 2, topY - 9, barW * (c.hp / c.maxHp), 3);
         ctx.restore();
-    }
-    // Magic ward aura connecting cards visually
-    const aliveCount = boss.cards.filter(c => !c.destroyed).length;
-    if (aliveCount > 0 && boss.fighter) {
-        const auraPulse = 0.3 + Math.sin(Date.now() / 200) * 0.2;
-        ctx.fillStyle = `rgba(120, 80, 200, ${auraPulse * 0.25})`;
-        ctx.beginPath();
-        ctx.ellipse(boss.fighter.x, boss.fighter.y - 60, 180, 100, 0, 0, Math.PI * 2);
-        ctx.fill();
+
+        // Lightning thread connecting creature to boss (visual link)
+        if (boss.fighter && c.landed) {
+            const t = (Date.now() / 100 + c.bobPhase) % 1;
+            if (t < 0.15) {
+                ctx.strokeStyle = `rgba(180, 80, 240, ${(0.15 - t) * 3})`;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                const segs = 5;
+                ctx.moveTo(c.x, topY + 30);
+                for (let s = 1; s <= segs; s++) {
+                    const lerp = s / segs;
+                    const lx = c.x + (boss.fighter.x - c.x) * lerp + (Math.random() - 0.5) * 14;
+                    const ly = (topY + 30) + ((boss.fighter.y - 30) - (topY + 30)) * lerp + (Math.random() - 0.5) * 14;
+                    ctx.lineTo(lx, ly);
+                }
+                ctx.stroke();
+            }
+        }
     }
 }
 
