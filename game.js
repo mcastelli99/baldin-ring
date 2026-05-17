@@ -102,6 +102,8 @@ const CHARACTERS = {
         special: { startup: 0.30, active: 0.30, recovery: 0.55, damage: 24, knockback: 500, range: 160, height: 140, both: true },
         spriteKey: 'ladder_man_sprite',
         spriteDefaultFacing: 1,   // source has ladder over right shoulder = faces RIGHT
+        bodyW: 58,    // skinny
+        bodyH: 185,   // very tall lanky goon
         scale: 1.5
     },
     generic_white: {
@@ -117,6 +119,8 @@ const CHARACTERS = {
         special: { startup: 0.05, active: 0.50, recovery: 0.40, damage: 30, knockback: 450, range: 130, height: 110, counter: true },
         spriteKey: 'generic_white_sprite',
         spriteDefaultFacing: -1,  // sword on viewer's left = faces LEFT
+        bodyW: 72,    // medium build
+        bodyH: 150,
         scale: 1.5
     },
     slug: {
@@ -132,6 +136,8 @@ const CHARACTERS = {
         special: { startup: 0.18, active: 0.05, recovery: 0.40, damage: 12, knockback: 200, range: 0, height: 0, projectile: 'tickets' },
         spriteKey: 'slug_sprite',
         spriteDefaultFacing: -1,  // cards on viewer's left = faces LEFT
+        bodyW: 82,    // heavyset, wider stance
+        bodyH: 138,   // shorter and stockier
         scale: 1.5
     }
 };
@@ -391,9 +397,12 @@ function tryBuyItem(item) {
 function startFight() {
     sfx('click');
     player.fighter = makeFighter({ x: 300, facing: 1, maxHp: player.data.maxHp, data: player.data });
+    // Apply per-character body dimensions (different silhouettes for visual variety)
+    if (player.data.bodyW) player.fighter.w = player.data.bodyW;
+    if (player.data.bodyH) player.fighter.h = player.data.bodyH;
     boss.data = BOSS_DATA;
     boss.fighter = makeFighter({ x: 720, facing: -1, maxHp: BOSS_DATA.maxHp, data: BOSS_DATA });
-    boss.fighter.w = 90; boss.fighter.h = 170;
+    boss.fighter.w = 100; boss.fighter.h = 195;  // boss is the biggest, most imposing presence
     boss.aiTimer = 2.0;
     boss.aiAction = null;
     boss.phase = 1;
