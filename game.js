@@ -41,7 +41,8 @@ const IMAGES = {
     halo_grunt_enemy:        { src: 'assets/img/sprites/halo_grunt_enemy.png',        img: null, loaded: false },
     mets_fan_enemy:          { src: 'assets/img/sprites/mets_fan_enemy.png',          img: null, loaded: false },
     spartan_enemy:           { src: 'assets/img/sprites/spartan_enemy.png',           img: null, loaded: false },
-    brute_enemy:             { src: 'assets/img/sprites/brute_enemy.png',             img: null, loaded: false }
+    brute_enemy:             { src: 'assets/img/sprites/brute_enemy.png',             img: null, loaded: false },
+    aggrocraig_enemy:        { src: 'assets/img/sprites/aggrocraig_enemy.png',        img: null, loaded: false }
 };
 (function loadImages() {
     Object.keys(IMAGES).forEach(key => {
@@ -261,7 +262,10 @@ const ENEMY_TYPES = {
         attackRange: 0,         // rifle burst (ranged)
         attackCooldown: 1.8,
         ai: 'spartan_rifle',
-        runeReward: 12
+        runeReward: 12,
+        miniboss: true,
+        title: 'SPARTAN',
+        subtitle: 'Battle Rifle'
     },
     brute: {
         spriteKey: 'brute_enemy',
@@ -272,7 +276,25 @@ const ENEMY_TYPES = {
         attackRange: 100,       // melee hammer
         attackCooldown: 1.9,
         ai: 'melee',
-        runeReward: 16
+        runeReward: 16,
+        miniboss: true,
+        title: 'BRUTE',
+        subtitle: 'Gravity Hammer Charge'
+    },
+    aggrocraig: {
+        spriteKey: 'aggrocraig_enemy',
+        w: 90, h: 165, drawScale: 1.5, spriteDefaultFacing: -1,
+        hp: 22,                 // squishy for a mini-boss but bigger HP than regular enemies
+        damage: 11,
+        speed: 80,
+        attackRange: 140,       // jets flag swing reach
+        attackCooldown: 1.6,
+        ai: 'aggrocraig',       // custom AI with 3 attack patterns
+        runeReward: 25,
+        miniboss: true,
+        title: 'THE AGGROCRAIG',
+        subtitle: 'Crohns Survivor / Jets Fan',
+        healOnDefeat: 18        // last-ditch heal when defeated (cheap round)
     }
 };
 
@@ -288,22 +310,26 @@ const LEVEL_ENTITIES = [
     { type: 'enemy',    enemyType: 'halo_grunt', x: 600 },
     { type: 'enemy',    enemyType: 'halo_grunt', x: 780 },
     { type: 'enemy',    enemyType: 'halo_grunt', x: 950 },
+    // First mini-boss: SPARTAN
     { type: 'enemy',    enemyType: 'spartan',    x: 1250 },
     { type: 'pickup',   pickupType: 'heal',      x: 1550 },
-    // ZONE B - mets fans pelting you, mixed with grunts
-    { type: 'enemy',    enemyType: 'mets_fan',   x: 1850 },
-    { type: 'enemy',    enemyType: 'halo_grunt', x: 2050 },
-    { type: 'enemy',    enemyType: 'mets_fan',   x: 2250 },
-    { type: 'enemy',    enemyType: 'spartan',    x: 2450 },
-    { type: 'pickup',   pickupType: 'power',     x: 2700 },
-    // ZONE C - billboards falling + first brute
-    { type: 'obstacle', kind: 'billboard',       x: 2950 },
-    { type: 'enemy',    enemyType: 'brute',      x: 3100 },
-    { type: 'obstacle', kind: 'billboard',       x: 3300 },
-    { type: 'obstacle', kind: 'billboard',       x: 3500 },
-    { type: 'enemy',    enemyType: 'mets_fan',   x: 3650 },
-    { type: 'pickup',   pickupType: 'heal',      x: 3900 },
-    // ZONE D - tombstone gauntlet finale
+    // ZONE B - mets fans + tombstones starting to pop up like piranha plants
+    { type: 'enemy',    enemyType: 'mets_fan',   x: 1800 },
+    { type: 'obstacle', kind: 'tombstone',       x: 1950 },
+    { type: 'enemy',    enemyType: 'halo_grunt', x: 2100 },
+    { type: 'obstacle', kind: 'tombstone',       x: 2200 },
+    { type: 'enemy',    enemyType: 'mets_fan',   x: 2350 },
+    // Second mini-boss: AGGROCRAIG (the Jets fan)
+    { type: 'enemy',    enemyType: 'aggrocraig', x: 2650 },
+    { type: 'pickup',   pickupType: 'power',     x: 2900 },
+    // ZONE C - billboards falling + brute mini-boss
+    { type: 'obstacle', kind: 'billboard',       x: 3100 },
+    { type: 'obstacle', kind: 'tombstone',       x: 3250 },
+    { type: 'enemy',    enemyType: 'brute',      x: 3400 },
+    { type: 'obstacle', kind: 'billboard',       x: 3600 },
+    { type: 'enemy',    enemyType: 'mets_fan',   x: 3750 },
+    { type: 'pickup',   pickupType: 'heal',      x: 3950 },
+    // ZONE D - final gauntlet: heavy tombstones + spartan + brute
     { type: 'obstacle', kind: 'tombstone',       x: 4100 },
     { type: 'obstacle', kind: 'tombstone',       x: 4250 },
     { type: 'enemy',    enemyType: 'spartan',    x: 4400 },
@@ -513,18 +539,8 @@ function handleInputDown(code) {
                 if (gameState === STATE.FIGHT && boss.fighter) {
                     f.facing = boss.fighter.x > f.x ? 1 : -1;
                 } else {
-                    // Stage: face nearest alive enemy, else face the direction of movement
-                    const aliveEnemies = enemies.filter(e => e.alive);
-                    if (aliveEnemies.length > 0) {
-                        let nearest = aliveEnemies[0]; let nearestDist = Math.abs(nearest.x - f.x);
-                        for (const e of aliveEnemies) {
-                            const d = Math.abs(e.x - f.x);
-                            if (d < nearestDist) { nearest = e; nearestDist = d; }
-                        }
-                        f.facing = nearest.x > f.x ? 1 : -1;
-                    } else {
-                        f.facing = (code === 'ArrowRight' || code === 'KeyD') ? 1 : -1;
-                    }
+                    // Stage: face the direction of the key pressed (always)
+                    f.facing = (code === 'ArrowRight' || code === 'KeyD') ? 1 : -1;
                 }
             }
         }
@@ -750,18 +766,20 @@ function makeBillboard(x) {
 function makeTombstone(x) {
     return {
         kind: 'tombstone',
-        x, y: FLOOR_Y + 100,
-        targetY: FLOOR_Y - 10,
+        x, y: FLOOR_Y,            // bottom of tombstone (y = feet position)
         w: 72, h: 110,
         hp: 4,
-        damage: 0,
+        damage: 12,               // damage you take if it hits you on the way up
         hitFlash: 0,
         spawnDelay: 0,
         spawned: false,
-        risen: false,
-        riseProgress: 0,
+        state: 'hidden',          // hidden -> warning -> rising -> up -> sinking -> cycle
+        stateTimer: 0,
+        riseProgress: 0,          // 0 = fully underground, 1 = fully risen
+        hasDamagedThisRise: false,
         destroyed: false,
         passed: false,
+        triggerRange: 70,         // player must be within X of tombstone X to trigger
         deathText: PEOPLE_DEATHS[Math.floor(Math.random() * PEOPLE_DEATHS.length)]
     };
 }
@@ -904,20 +922,34 @@ function trySpecial() {
             };
         }, startupMs);
     } else if (proj === 'waiters') {
-        // SLUG: summon 2 pompous waiters
+        // SLUG: summon 2 pompous waiters (works in both STAGE and FIGHT)
         setTimeout(() => {
-            if (gameState !== STATE.FIGHT) return;
+            if (gameState !== STATE.FIGHT && gameState !== STATE.STAGE) return;
             chatPush('sys', 'Slug summons the staff');
+            // Determine spawn anchor: boss if present, else nearest enemy, else player
+            let anchor = player.fighter.x + 100;
+            if (gameState === STATE.FIGHT && boss.fighter) anchor = boss.fighter.x;
+            else {
+                const alive = enemies.filter(e => e.alive && Math.abs(e.x - player.fighter.x) < GW * 0.8);
+                if (alive.length) {
+                    let nearest = alive[0]; let dmin = Math.abs(nearest.x - player.fighter.x);
+                    for (const e of alive) {
+                        const d = Math.abs(e.x - player.fighter.x);
+                        if (d < dmin) { nearest = e; dmin = d; }
+                    }
+                    anchor = nearest.x;
+                }
+            }
             for (let i = 0; i < 2; i++) {
                 setTimeout(() => {
-                    if (gameState !== STATE.FIGHT) return;
+                    if (gameState !== STATE.FIGHT && gameState !== STATE.STAGE) return;
                     const fromLeft = i === 0;
                     waiters.push({
-                        x: fromLeft ? -100 : GW + 100,
+                        x: fromLeft ? anchor - 500 : anchor + 500,
                         y: FLOOR_Y,
-                        targetX: boss.fighter.x + (fromLeft ? -130 : 130),
+                        targetX: anchor + (fromLeft ? -130 : 130),
                         facing: fromLeft ? 1 : -1,
-                        state: 'walking',   // walking -> serving -> leaving
+                        state: 'walking',
                         stateTimer: 0,
                         hasServed: false,
                         bobPhase: Math.random() * Math.PI * 2,
@@ -1100,7 +1132,7 @@ function updateFighter(f, dt, isBoss) {
                 if (!f.hasHitThisAttack) {
                     for (const o of obstacles) {
                         if (o.destroyed || !o.spawned) continue;
-                        if (o.kind === 'tombstone' && !o.risen) continue;
+                        if (o.kind === 'tombstone' && o.state !== 'up' && o.state !== 'rising') continue;
                         const overlap = Math.abs((f.x + f.facing * range / 2 + 30) - o.x) < range / 2 + o.w / 2 + 20;
                         if (overlap) {
                             damageObstacle(o, dmg, f.facing);
@@ -1156,21 +1188,14 @@ function updateFighter(f, dt, isBoss) {
         // walking handled by AI
     }
 
-    // FACING: face the opponent (or nearest enemy in stage mode) when on ground + not mid-attack
+    // FACING: in stage mode, character ALWAYS faces the direction of the key being held.
+    // In boss fight, face the boss (since combat is 1v1 with directional blocking).
     if (f.onGround && f.attackPhase !== 'startup' && f.attackPhase !== 'active') {
         if (gameState === STATE.STAGE && !isBoss) {
-            const aliveEnemies = enemies.filter(e => e.alive);
-            if (aliveEnemies.length > 0) {
-                let nearest = aliveEnemies[0];
-                let nearestDist = Math.abs(nearest.x - f.x);
-                for (const e of aliveEnemies) {
-                    const d = Math.abs(e.x - f.x);
-                    if (d < nearestDist) { nearest = e; nearestDist = d; }
-                }
-                f.facing = nearest.x > f.x ? 1 : -1;
-            } else if (stage.showGoArrow) {
-                f.facing = 1;
-            }
+            // Direction of movement wins. If no key held, default to facing right (forward).
+            if (keys['ArrowLeft'] || keys['KeyA']) f.facing = -1;
+            else if (keys['ArrowRight'] || keys['KeyD']) f.facing = 1;
+            // (else keep current facing - don't snap when idle)
         } else {
             const opponent = isBoss ? player.fighter : boss.fighter;
             if (opponent) f.facing = opponent.x > f.x ? 1 : -1;
@@ -1190,7 +1215,7 @@ function updateFighter(f, dt, isBoss) {
     // STAGE: tombstones block movement at ground level (must destroy or jump over)
     if (gameState === STATE.STAGE && !isBoss) {
         for (const o of obstacles) {
-            if (o.kind !== 'tombstone' || !o.spawned || !o.risen || o.destroyed) continue;
+            if (o.kind !== 'tombstone' || !o.spawned || o.state !== 'up' || o.destroyed) continue;
             const tLeft = o.x - o.w / 2;
             const tRight = o.x + o.w / 2;
             const pLeft = f.x - f.w / 2;
@@ -1624,7 +1649,18 @@ function updateStage(dt) {
     // Wake dormant entities when camera approaches (within 1 screen width)
     const wakeRange = GW;
     for (const e of enemies) {
-        if (e.dormant && (e.x - player.fighter.x) < wakeRange) e.dormant = false;
+        if (e.dormant && (e.x - player.fighter.x) < wakeRange) {
+            e.dormant = false;
+            // Mini-boss dramatic entry banner
+            if (e.miniboss && e.title) {
+                stage.bannerText = e.title;
+                stage.bannerSubtitle = e.subtitle || '';
+                stage.bannerTimer = 2.4;
+                chatPush('sys', `!! ${e.title} APPEARS !!`);
+                addShake(10, 0.5);
+                sfx('parry');
+            }
+        }
     }
     for (const o of obstacles) {
         if (o.dormant && (o.x - player.fighter.x) < wakeRange) {
@@ -1701,6 +1737,66 @@ function updateEnemies(dt) {
                     });
                     sfx('whiff');
                     e.attackTimer = e.attackCooldown;
+                }
+            }
+        } else if (e.ai === 'aggrocraig') {
+            // AggroCraig - Crohn's survivor / Jets fan mini-boss
+            // 3 attacks cycled: bad breath (close range cone), poison cloud (lingering AOE), jets flag swing (wide back-and-forth)
+            const ideal = 130;
+            if (dist > ideal + 80) { e.vx = Math.sign(dx) * e.speed; e.state = 'walking'; }
+            else if (dist < ideal - 60) { e.vx = -Math.sign(dx) * e.speed * 0.6; e.state = 'walking'; }
+            else { e.vx = 0; e.state = 'idle'; }
+            if (e.attackTimer <= 0) {
+                e.attackTimer = e.attackCooldown;
+                const move = (e.lastMove || 0) % 3;
+                e.lastMove = (e.lastMove || 0) + 1;
+                if (move === 0) {
+                    // BAD BREATH - sickly green cone projectile, short range
+                    chatPush('sys', 'AggroCraig: aaaaagh');
+                    for (let i = 0; i < 5; i++) {
+                        projectiles.push({
+                            type: 'breath',
+                            x: e.x + e.facing * 30,
+                            y: e.y - e.h * 0.6,
+                            vx: e.facing * (180 + i * 30),
+                            vy: -30 + i * 10,
+                            damage: 4,
+                            owner: 'boss',
+                            life: 0.8,
+                            spin: Math.random() * 6
+                        });
+                    }
+                    sfx('whiff');
+                } else if (move === 1) {
+                    // POISON - sickly cloud puff that hangs around player
+                    chatPush('sys', 'AggroCraig: my CROHNS');
+                    projectiles.push({
+                        type: 'poison',
+                        x: e.x + e.facing * 50,
+                        y: e.y - e.h * 0.5,
+                        vx: e.facing * 220,
+                        vy: -200,
+                        damage: 7,
+                        owner: 'boss',
+                        life: 2.0,
+                        spin: 0
+                    });
+                    sfx('damage');
+                } else {
+                    // JETS FLAG SWING - wide back-and-forth swing (hits if you're too close)
+                    chatPush('sys', 'AggroCraig: J! E! T! S! JETS JETS JETS!');
+                    floatingTexts.push({ x: e.x, y: e.y - e.h - 30, text: 'GO JETS', color: '#0a5a3a', life: 1.4 });
+                    if (dist < 160 && player.fighter.invuln <= 0 && player.fighter.hitTimer <= 0) {
+                        player.fighter.hp -= 11;
+                        player.fighter.hitTimer = 0.30;
+                        player.fighter.vx = Math.sign(dx) * -400;
+                        player.fighter.vy = -250;
+                        player.fighter.onGround = false;
+                        player.fighter.hitFlash = 0.3;
+                        sfx('hit_heavy');
+                        addShake(12, 0.3);
+                        floatingTexts.push({ x: player.fighter.x, y: player.fighter.y - 130, text: '-11', color: '#ff5a5a', life: 1.0 });
+                    }
                 }
             }
         } else if (e.ai === 'spartan_rifle') {
@@ -1785,21 +1881,66 @@ function updateObstacles(dt) {
                 }
             }
         } else if (o.kind === 'tombstone') {
-            if (!o.risen) {
-                o.riseProgress = Math.min(1, o.riseProgress + dt * 1.6);
-                o.y = FLOOR_Y + 100 - (110 * o.riseProgress);
-                if (o.riseProgress >= 1) {
-                    o.risen = true;
-                    o.y = o.targetY;
-                    spawnParticles(o.x, FLOOR_Y, '#5a3a18', 10);
+            // Piranha-plant behavior: hidden until player nearby, then warning shake, then rises fast,
+            // damaging player from below if they're standing over it. Stays up briefly, then sinks back.
+            o.stateTimer -= dt;
+            const playerOverlap = Math.abs(player.fighter.x - o.x) < o.w / 2 + player.fighter.w / 2;
+            const playerNearby = Math.abs(player.fighter.x - o.x) < o.triggerRange;
+
+            if (o.state === 'hidden') {
+                o.riseProgress = 0;
+                if (playerNearby) {
+                    o.state = 'warning';
+                    o.stateTimer = 0.35;
+                    sfx('whiff');
+                    // Subtle ground rumble particles
+                    spawnParticles(o.x, FLOOR_Y, '#3a1810', 6);
+                }
+            } else if (o.state === 'warning') {
+                // Brief telegraph - ground shakes, dirt mound appears
+                if (o.stateTimer <= 0) {
+                    o.state = 'rising';
+                    o.stateTimer = 0.32;     // rise fast - ~1/3 sec
+                    o.hasDamagedThisRise = false;
+                }
+            } else if (o.state === 'rising') {
+                o.riseProgress = Math.min(1, 1 - (o.stateTimer / 0.32));
+                // While rising, damage player if standing over it (pop-up attack)
+                if (playerOverlap && !o.hasDamagedThisRise && player.fighter.invuln <= 0 && player.fighter.hitTimer <= 0) {
+                    o.hasDamagedThisRise = true;
+                    player.fighter.hp -= o.damage;
+                    player.fighter.hitTimer = 0.35;
+                    player.fighter.vy = -350;    // launch them up off the tombstone
+                    player.fighter.vx = (player.fighter.facing < 0 ? 200 : -200);
+                    player.fighter.onGround = false;
+                    player.fighter.hitFlash = 0.3;
+                    sfx('damage');
+                    addShake(10, 0.25);
+                    spawnParticles(player.fighter.x, player.fighter.y - 60, '#aa3030', 12);
+                    floatingTexts.push({ x: player.fighter.x, y: player.fighter.y - 140, text: `-${o.damage} RIP`, color: '#ff5a5a', life: 1.1 });
+                }
+                if (o.stateTimer <= 0) {
+                    o.riseProgress = 1;
+                    o.state = 'up';
+                    o.stateTimer = 3.0;          // stays up for 3 seconds
                     sfx('hit_light');
                 }
-            } else {
-                // Check passed
-                if (player.fighter.x > o.x + 60 && !o.passed) {
-                    o.passed = true;
+            } else if (o.state === 'up') {
+                o.riseProgress = 1;
+                if (o.stateTimer <= 0) {
+                    o.state = 'sinking';
+                    o.stateTimer = 0.6;
+                }
+            } else if (o.state === 'sinking') {
+                o.riseProgress = Math.max(0, o.stateTimer / 0.6);
+                if (o.stateTimer <= 0) {
+                    o.state = 'hidden';
+                    o.stateTimer = 1.5 + Math.random() * 1.0;  // cooldown before can trigger again
+                    o.hasDamagedThisRise = false;
                 }
             }
+            // Mark as passed if player walks well past it (so wave clear logic works)
+            if (player.fighter.x > o.x + 100 && !o.passed) o.passed = true;
         }
     }
     // Cull
@@ -1849,6 +1990,15 @@ function damageEnemy(e, dmg, knockback, srcFacing) {
         sfx('hit_heavy');
         player.runes += e.runeReward || 5;
         floatingTexts.push({ x: e.x, y: e.y - e.h - 30, text: `+${e.runeReward} R`, color: '#fada30', life: 1.2 });
+        // AggroCraig drops a cheap-round heal when he goes down
+        if (e.healOnDefeat && player.fighter.hp < player.fighter.maxHp) {
+            const heal = e.healOnDefeat;
+            player.fighter.hp = Math.min(player.fighter.maxHp, player.fighter.hp + heal);
+            sfx('heal');
+            chatPush('sys', "AggroCraig: THIS ROUND'S ON ME");
+            floatingTexts.push({ x: e.x, y: e.y - e.h - 60, text: "THIS ROUND'S ON ME", color: '#5aff5a', life: 2.0 });
+            floatingTexts.push({ x: player.fighter.x, y: player.fighter.y - 160, text: `+${heal} HP`, color: '#5aff5a', life: 1.5 });
+        }
         return true;
     }
     return false;
@@ -1893,41 +2043,51 @@ function updateFlagAttack(dt) {
         flagAttack.x += flagAttack.vx * dt * 0.3;
     }
 
-    // Hit check on boss (once)
-    if (!flagAttack.hasHitBoss) {
-        const fx = flagAttack.x;
-        const fLeft = flagAttack.facing > 0 ? fx : fx - flagAttack.width;
-        const fRight = flagAttack.facing > 0 ? fx + flagAttack.width : fx;
-        const fTop = flagAttack.y;
-        const fBot = flagAttack.y + flagAttack.height;
-        const b = boss.fighter;
-        if (b.x > fLeft && b.x < fRight && (b.y - b.h) < fBot && b.y > fTop - 20) {
-            flagAttack.hasHitBoss = true;
-            boss.fighter.hp -= flagAttack.damage;
-            boss.fighter.hitFlash = 0.4;
-            boss.fighter.hitTimer = 0.6;
-            boss.fighter.vx = flagAttack.facing * flagAttack.knockback;
-            boss.fighter.vy = -350;
-            boss.fighter.onGround = false;
-            boss.fighter.attackPhase = 'none';
-            boss.fighter.attackType = null;
-            boss.fighter.attackData = null;
-            boss.attackToken = (boss.attackToken || 0) + 1;
-            sfx('hit_heavy');
-            addShake(18, 0.4);
-            addHitStop(0.08);
-            spawnParticles(b.x, b.y - b.h/2, '#fff', 14);
-            spawnParticles(b.x, b.y - b.h/2, '#c41818', 14);
-            spawnParticles(b.x, b.y - b.h/2, '#1a4aff', 14);
-            floatingTexts.push({ x: b.x, y: b.y - 200, text: 'BORICUA!', color: '#fada30', life: 1.6 });
-            floatingTexts.push({ x: b.x, y: b.y - 160, text: `-${flagAttack.damage}`, color: '#ff5a5a', life: 1.2 });
-            if (boss.fighter.hp <= 0) {
-                boss.fighter.hp = 0;
-                gameState = STATE.WIN;
-                stopBossMusic();
-                sfx('win');
+    // Hit check on boss OR enemies (one per target)
+    if (!flagAttack.hitTargets) flagAttack.hitTargets = new Set();
+    const fx = flagAttack.x;
+    const fLeft = flagAttack.facing > 0 ? fx : fx - flagAttack.width;
+    const fRight = flagAttack.facing > 0 ? fx + flagAttack.width : fx;
+    const fTop = flagAttack.y;
+    const fBot = flagAttack.y + flagAttack.height;
+
+    const tryFlagHit = (target, isBossTarget) => {
+        if (flagAttack.hitTargets.has(target)) return;
+        if (target.x > fLeft && target.x < fRight && (target.y - target.h) < fBot && target.y > fTop - 20) {
+            flagAttack.hitTargets.add(target);
+            const dmg = flagAttack.damage;
+            if (isBossTarget) {
+                boss.fighter.hp -= dmg;
+                boss.fighter.hitFlash = 0.4;
+                boss.fighter.hitTimer = 0.6;
+                boss.fighter.vx = flagAttack.facing * flagAttack.knockback;
+                boss.fighter.vy = -350;
+                boss.fighter.onGround = false;
+                boss.fighter.attackPhase = 'none';
+                boss.fighter.attackType = null;
+                boss.fighter.attackData = null;
+                boss.attackToken = (boss.attackToken || 0) + 1;
+                if (boss.fighter.hp <= 0) {
+                    boss.fighter.hp = 0;
+                    gameState = STATE.WIN;
+                    stopBossMusic();
+                    sfx('win');
+                }
+            } else {
+                damageEnemy(target, dmg, flagAttack.knockback, flagAttack.facing);
             }
+            sfx('hit_heavy');
+            addShake(14, 0.3);
+            addHitStop(0.05);
+            spawnParticles(target.x, target.y - (target.h || 100) / 2, '#fff', 10);
+            spawnParticles(target.x, target.y - (target.h || 100) / 2, '#c41818', 10);
+            spawnParticles(target.x, target.y - (target.h || 100) / 2, '#1a4aff', 10);
+            floatingTexts.push({ x: target.x, y: target.y - 200, text: 'BORICUA!', color: '#fada30', life: 1.4 });
         }
+    };
+    if (boss.fighter) tryFlagHit(boss.fighter, true);
+    for (const e of enemies) {
+        if (e.alive && !e.dormant) tryFlagHit(e, false);
     }
 
     if (flagAttack.life <= 0) flagAttack = null;
@@ -1951,37 +2111,53 @@ function updateWaiters(dt) {
             w.stateTimer -= dt;
             if (w.stateTimer <= 0.3 && !w.hasServed) {
                 w.hasServed = true;
-                // Apply platter hit on boss
-                const dxToBoss = Math.abs(boss.fighter.x - w.x);
-                if (dxToBoss < 220) {
-                    boss.fighter.hp -= w.damage;
-                    boss.fighter.hitFlash = 0.3;
-                    boss.fighter.hitTimer = 0.4;
-                    boss.fighter.vx = (boss.fighter.x > w.x ? 1 : -1) * 350;
-                    boss.fighter.attackPhase = 'none';
-                    boss.fighter.attackType = null;
-                    boss.fighter.attackData = null;
-                    boss.attackToken = (boss.attackToken || 0) + 1;
+                // Pick target: boss in FIGHT, nearest live enemy in STAGE
+                let target = null;
+                if (gameState === STATE.FIGHT && boss.fighter) {
+                    target = boss.fighter;
+                } else {
+                    const alive = enemies.filter(e => e.alive);
+                    let dmin = Infinity;
+                    for (const e of alive) {
+                        const d = Math.abs(e.x - w.x);
+                        if (d < dmin) { dmin = d; target = e; }
+                    }
+                }
+                if (target && Math.abs(target.x - w.x) < 240) {
+                    if (target === boss.fighter) {
+                        boss.fighter.hp -= w.damage;
+                        boss.fighter.hitFlash = 0.3;
+                        boss.fighter.hitTimer = 0.4;
+                        boss.fighter.vx = (boss.fighter.x > w.x ? 1 : -1) * 350;
+                        boss.fighter.attackPhase = 'none';
+                        boss.fighter.attackType = null;
+                        boss.fighter.attackData = null;
+                        boss.attackToken = (boss.attackToken || 0) + 1;
+                        if (boss.fighter.hp <= 0) {
+                            boss.fighter.hp = 0;
+                            gameState = STATE.WIN;
+                            stopBossMusic();
+                            sfx('win');
+                        }
+                    } else {
+                        damageEnemy(target, w.damage, 320, (target.x > w.x ? 1 : -1));
+                    }
                     sfx('hit_heavy');
                     addShake(10, 0.2);
-                    spawnParticles(boss.fighter.x, boss.fighter.y - boss.fighter.h/2, '#cccccc', 12);
-                    floatingTexts.push({ x: boss.fighter.x + (Math.random()-0.5)*40, y: boss.fighter.y - 140, text: `-${w.damage}`, color: '#fff', life: 1.0 });
-                    if (boss.fighter.hp <= 0) {
-                        boss.fighter.hp = 0;
-                        gameState = STATE.WIN;
-                        stopBossMusic();
-                        sfx('win');
-                    }
+                    spawnParticles(target.x, target.y - (target.h || 100) / 2, '#cccccc', 12);
+                    floatingTexts.push({ x: target.x + (Math.random()-0.5)*40, y: target.y - 140, text: `-${w.damage}`, color: '#fff', life: 1.0 });
                 }
             }
             if (w.stateTimer <= 0) {
                 w.state = 'leaving';
-                w.facing = w.x < GW / 2 ? -1 : 1;
+                // Leave toward whichever side they entered from (relative to camera now)
+                w.facing = w.x < (cameraX + GW / 2) ? -1 : 1;
             }
         } else if (w.state === 'leaving') {
             w.x += w.facing * 320 * dt;
-            if (w.x < -120 || w.x > GW + 120) {
-                w.life = 0;  // mark for removal
+            // Remove when off-screen (relative to camera)
+            if (w.x < cameraX - 200 || w.x > cameraX + GW + 200) {
+                w.life = 0;
             }
         }
     }
@@ -2429,6 +2605,36 @@ function drawFighter(f, spriteKey, who) {
 }
 
 function drawProjectile(p) {
+    if (p.type === 'breath') {
+        // AggroCraig bad-breath cloud puff - small sickly green wisps
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.spin);
+        ctx.fillStyle = `rgba(140, 200, 60, ${Math.min(1, p.life * 1.5)})`;
+        ctx.shadowColor = '#8acc40';
+        ctx.shadowBlur = 14;
+        ctx.beginPath(); ctx.arc(0, 0, 14, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = `rgba(180, 220, 100, ${Math.min(1, p.life * 1.5)})`;
+        ctx.beginPath(); ctx.arc(-4, -3, 8, 0, Math.PI * 2); ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.restore();
+        return;
+    }
+    if (p.type === 'poison') {
+        // AggroCraig poison gas cloud - bigger sickly green/brown
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.fillStyle = `rgba(100, 140, 40, ${Math.min(0.85, p.life * 0.5)})`;
+        ctx.shadowColor = '#5a8a20';
+        ctx.shadowBlur = 18;
+        ctx.beginPath(); ctx.arc(0, 0, 22, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = `rgba(80, 60, 30, ${Math.min(0.7, p.life * 0.5)})`;
+        ctx.beginPath(); ctx.arc(6, 4, 14, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); ctx.arc(-7, 2, 12, 0, Math.PI * 2); ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.restore();
+        return;
+    }
     if (p.type === 'bullet') {
         // Spartan rifle round - bright tracer streak
         ctx.save();
@@ -2624,6 +2830,11 @@ function renderStage() {
     pickups.forEach(drawPickup);
     // Projectiles
     projectiles.forEach(drawProjectile);
+    // Slug's UFC tickets (they're in projectiles array now actually)
+    // Slug's WAITERS specifically need to render in world space
+    waiters.forEach(drawWaiter);
+    // Generic White's PR flag attack
+    drawFlagAttack();
     // Player
     drawFighter(player.fighter, player.data ? player.data.spriteKey : null, 'player');
     // Particles
@@ -2651,16 +2862,25 @@ function renderStage() {
     drawDJBooth();
     drawStageHUD();
 
-    // Wave banner
+    // Mini-boss / banner overlay
     if (stage.bannerTimer > 0) {
-        const a = Math.min(1, stage.bannerTimer / 0.4) * Math.min(1, (2.0 - stage.bannerTimer) / 0.3);
-        ctx.fillStyle = `rgba(0, 0, 0, ${a * 0.6})`;
-        ctx.fillRect(0, H / 2 - 70, GW, 100);
+        const totalDur = 2.4;
+        const a = Math.min(1, stage.bannerTimer / 0.4) * Math.min(1, (totalDur - stage.bannerTimer) / 0.3);
+        ctx.fillStyle = `rgba(0, 0, 0, ${a * 0.65})`;
+        ctx.fillRect(0, H / 2 - 80, GW, 140);
+        ctx.strokeStyle = `rgba(255, 60, 40, ${a})`;
+        ctx.lineWidth = 3;
+        ctx.strokeRect(0, H / 2 - 80, GW, 140);
         ctx.fillStyle = `rgba(255, 60, 40, ${a})`;
         ctx.font = 'bold 64px Georgia';
         ctx.textAlign = 'center';
         ctx.shadowColor = '#000'; ctx.shadowBlur = 10;
-        ctx.fillText(stage.bannerText, GW / 2, H / 2);
+        ctx.fillText(stage.bannerText, GW / 2, H / 2 - 5);
+        if (stage.bannerSubtitle) {
+            ctx.fillStyle = `rgba(212, 175, 55, ${a})`;
+            ctx.font = 'italic 20px Georgia';
+            ctx.fillText(stage.bannerSubtitle, GW / 2, H / 2 + 30);
+        }
         ctx.shadowBlur = 0;
     }
 
@@ -2751,12 +2971,55 @@ function drawObstacle(o) {
             ctx.fillRect(o.x - barW / 2, o.y - o.h / 2 - 11, barW * (o.hp / 6), 3);
         }
     } else if (o.kind === 'tombstone') {
-        // y is feet/bottom of tombstone
+        // Hidden completely when below ground
+        if (o.state === 'hidden' && o.riseProgress === 0) {
+            // Show subtle disturbed earth so the player knows something's here
+            ctx.fillStyle = 'rgba(60, 30, 15, 0.7)';
+            ctx.beginPath();
+            ctx.ellipse(o.x, o.y, o.w / 2 + 4, 5, 0, 0, Math.PI * 2);
+            ctx.fill();
+            return;
+        }
+        // Warning shake (small dirt puffs and tremor lines before rise)
+        if (o.state === 'warning') {
+            const shake = (Math.random() - 0.5) * 4;
+            ctx.fillStyle = 'rgba(120, 60, 30, 0.9)';
+            ctx.beginPath();
+            ctx.ellipse(o.x + shake, o.y, o.w / 2 + 8, 8, 0, 0, Math.PI * 2);
+            ctx.fill();
+            // Cracks
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(o.x - o.w / 4, o.y);
+            ctx.lineTo(o.x - o.w / 4 + 4, o.y - 8);
+            ctx.lineTo(o.x, o.y - 4);
+            ctx.lineTo(o.x + o.w / 4 - 4, o.y - 8);
+            ctx.lineTo(o.x + o.w / 4, o.y);
+            ctx.stroke();
+            // Warning "!" floats above
+            ctx.fillStyle = `rgba(255, 80, 40, ${0.5 + Math.random() * 0.5})`;
+            ctx.font = 'bold 28px Georgia';
+            ctx.textAlign = 'center';
+            ctx.fillText('!', o.x, o.y - 20);
+            return;
+        }
+        // Tombstone partially or fully risen. Visible height = h * riseProgress.
+        const visibleH = o.h * o.riseProgress;
+        const topY = o.y - visibleH;
+        // Mound at base
+        ctx.fillStyle = '#2a1a08';
+        ctx.beginPath();
+        ctx.ellipse(o.x, o.y, o.w / 2 + 8, 6, 0, 0, Math.PI * 2);
+        ctx.fill();
+        // Clip to ground level so the tombstone "emerges" from below
         ctx.save();
+        ctx.beginPath();
+        ctx.rect(o.x - o.w / 2 - 4, topY, o.w + 8, visibleH);
+        ctx.clip();
         ctx.translate(o.x, o.y);
-        // Tombstone shape - rounded top rectangle
-        ctx.fillStyle = '#3a3a3a';
-        if (o.hitFlash > 0) ctx.fillStyle = '#888888';
+        // Tombstone shape (full size, but clipped to visible portion)
+        ctx.fillStyle = o.hitFlash > 0 ? '#888888' : '#3a3a3a';
         ctx.beginPath();
         ctx.moveTo(-o.w / 2, 0);
         ctx.lineTo(-o.w / 2, -o.h + 25);
@@ -2766,7 +3029,6 @@ function drawObstacle(o) {
         ctx.lineTo(o.w / 2, 0);
         ctx.closePath();
         ctx.fill();
-        // Darker stripe inset
         ctx.fillStyle = '#2a2a2a';
         ctx.beginPath();
         ctx.moveTo(-o.w / 2 + 6, 0);
@@ -2777,28 +3039,21 @@ function drawObstacle(o) {
         ctx.lineTo(o.w / 2 - 6, 0);
         ctx.closePath();
         ctx.fill();
-        // RIP text
         ctx.fillStyle = '#888';
         ctx.font = 'bold 16px Georgia';
         ctx.textAlign = 'center';
         ctx.fillText('R.I.P.', 0, -o.h + 32);
-        // Death cause text (wrapped)
         ctx.fillStyle = '#cccccc';
         ctx.font = '9px Georgia';
         wrapText(o.deathText, 0, -o.h + 50, o.w - 14, 11);
-        // Mound at base
-        ctx.fillStyle = '#2a1a08';
-        ctx.beginPath();
-        ctx.ellipse(0, 0, o.w / 2 + 8, 6, 0, 0, Math.PI * 2);
-        ctx.fill();
         ctx.restore();
-        // HP bar
-        if (o.hp < 4 && o.risen) {
+        // HP bar (only when fully up)
+        if (o.hp < 4 && o.state === 'up') {
             const barW = 50;
             ctx.fillStyle = '#000';
-            ctx.fillRect(o.x - barW / 2 - 1, o.y - o.h - 12, barW + 2, 5);
+            ctx.fillRect(o.x - barW / 2 - 1, topY - 12, barW + 2, 5);
             ctx.fillStyle = '#c41818';
-            ctx.fillRect(o.x - barW / 2, o.y - o.h - 11, barW * (o.hp / 4), 3);
+            ctx.fillRect(o.x - barW / 2, topY - 11, barW * (o.hp / 4), 3);
         }
     }
 }
