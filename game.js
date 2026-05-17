@@ -284,7 +284,7 @@ const ENEMY_TYPES = {
     aggrocraig: {
         spriteKey: 'aggrocraig_enemy',
         w: 90, h: 165, drawScale: 1.5, spriteDefaultFacing: -1,
-        hp: 28,
+        hp: 180,                 // tanky - ~5-6 specials to kill
         damage: 11,
         speed: 80,
         attackRange: 140,
@@ -803,20 +803,21 @@ function makeBillboard(x) {
 function makeTombstone(x) {
     return {
         kind: 'tombstone',
-        x, y: FLOOR_Y,            // bottom of tombstone (y = feet position)
+        x, y: FLOOR_Y,
         w: 72, h: 110,
-        hp: 4,
-        damage: 12,               // damage you take if it hits you on the way up
+        hp: 8,                    // 2-3 light hits to destroy
+        maxHp: 8,
+        damage: 12,
         hitFlash: 0,
         spawnDelay: 0,
         spawned: false,
-        state: 'hidden',          // hidden -> warning -> rising -> up -> sinking -> cycle
+        state: 'hidden',
         stateTimer: 0,
-        riseProgress: 0,          // 0 = fully underground, 1 = fully risen
+        riseProgress: 0,
         hasDamagedThisRise: false,
         destroyed: false,
         passed: false,
-        triggerRange: 70,         // player must be within X of tombstone X to trigger
+        triggerRange: 70,
         deathText: PEOPLE_DEATHS[Math.floor(Math.random() * PEOPLE_DEATHS.length)]
     };
 }
@@ -2136,15 +2137,21 @@ function damageEnemy(e, dmg, knockback, srcFacing) {
 
 function damageObstacle(o, dmg, srcFacing) {
     o.hp -= dmg;
-    o.hitFlash = 0.25;
-    spawnParticles(o.x, o.y, '#cccccc', 6);
+    o.hitFlash = 0.30;
+    spawnParticles(o.x, o.y - 30, '#cccccc', 8);
+    spawnParticles(o.x, o.y - 30, '#888888', 6);
     sfx('hit_light');
     if (o.hp <= 0) {
         o.destroyed = true;
-        spawnParticles(o.x, o.y, '#fada30', 18);
+        // Big destruction burst
+        spawnParticles(o.x, o.y - 40, '#fada30', 24);
+        spawnParticles(o.x, o.y - 40, '#888888', 18);
+        spawnParticles(o.x, o.y - 40, '#3a3a3a', 12);
         sfx('hit_heavy');
-        floatingTexts.push({ x: o.x, y: o.y - 40, text: '+5 R', color: '#fada30', life: 1.0 });
-        player.runes += 5;
+        addShake(5, 0.15);
+        const reward = o.kind === 'tombstone' ? 10 : 6;
+        floatingTexts.push({ x: o.x, y: o.y - 60, text: `DESTROYED +${reward}R`, color: '#fada30', life: 1.4 });
+        player.runes += reward;
     }
 }
 
@@ -3235,13 +3242,23 @@ function drawObstacle(o) {
         ctx.font = '9px Georgia';
         wrapText(o.deathText, 0, -o.h + 50, o.w - 14, 11);
         ctx.restore();
-        // HP bar (only when fully up)
-        if (o.hp < 4 && o.state === 'up') {
-            const barW = 50;
+        // HP bar always shows when fully up so the destructible nature is obvious
+        if (o.state === 'up' || (o.state === 'rising' && o.riseProgress > 0.5)) {
+            const barW = 56;
+            const maxHp = o.maxHp || 8;
             ctx.fillStyle = '#000';
-            ctx.fillRect(o.x - barW / 2 - 1, topY - 12, barW + 2, 5);
+            ctx.fillRect(o.x - barW / 2 - 1, topY - 14, barW + 2, 6);
+            ctx.fillStyle = '#1a0808';
+            ctx.fillRect(o.x - barW / 2, topY - 13, barW, 4);
             ctx.fillStyle = '#c41818';
-            ctx.fillRect(o.x - barW / 2, topY - 11, barW * (o.hp / 4), 3);
+            ctx.fillRect(o.x - barW / 2, topY - 13, barW * (o.hp / maxHp), 4);
+            // "DESTROY" label hint above the bar so players know they can hit it
+            if (o.hp === maxHp) {
+                ctx.fillStyle = '#fada30';
+                ctx.font = 'bold 9px Georgia';
+                ctx.textAlign = 'center';
+                ctx.fillText('hit to destroy', o.x, topY - 18);
+            }
         }
     }
 }
