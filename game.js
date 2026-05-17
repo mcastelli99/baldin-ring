@@ -737,7 +737,7 @@ function triggerEvilBaldRevive() {
     boss.fighter.onGround = false;
     boss.fighter.vy = 0;
     boss.attackToken = (boss.attackToken || 0) + 1;
-    boss.hoverY = FLOOR_Y - 380;    // floating position high above the arena
+    boss.hoverY = FLOOR_Y - 260;    // floating mid-air, still fully visible
     boss.fighter.y = boss.hoverY;
     boss.cardSpawnTimer = 1.5;      // first creature appears after the banner
     boss.figurineTimer = 3.5;       // first figurine throw after the creatures get rolling
@@ -2949,13 +2949,15 @@ function renderFight() {
         ctx.stroke();
     });
 
-    // Boss
-    drawFighter(boss.fighter, 'evil_bald_sprite', 'boss');
-    // Cloak overlay (after revival)
+    // Cloak BEHIND the boss sprite (draws first so sprite shows on top)
     if (boss.cloaked) drawBossCloak();
+    // Boss sprite (Evil Bald still fully visible)
+    drawFighter(boss.fighter, 'evil_bald_sprite', 'boss');
+    // Glowing red eyes overlay on top of the sprite
+    if (boss.cloaked) drawBossCloakEyes();
     // Painting figurine in hand (revive phase tell before the throw)
     if (boss.painting) drawBossPainting();
-    // MtG cards (rendered in front of boss so they look like a ward)
+    // MtG creatures
     if (boss.cards && boss.cards.length > 0) drawBossCards();
     // Player
     drawFighter(player.fighter, player.data ? player.data.spriteKey : null, 'player');
@@ -3983,47 +3985,78 @@ function drawBossPainting() {
     ctx.shadowBlur = 0;
 }
 
+// Cloak is rendered BEFORE the boss sprite as a flowing cape silhouette behind him.
+// The actual Evil Bald sprite still shows through. Glowing red eyes are added on top after.
 function drawBossCloak() {
     const bx = boss.fighter.x;
     const by = boss.fighter.y;
-    const sway = Math.sin(Date.now() / 600) * 6;
-    // Dark robe trapezoid behind the boss
+    const h = boss.fighter.h;
+    const t = Date.now() / 500;
+    const sway = Math.sin(t) * 14;
+
     ctx.save();
-    ctx.fillStyle = 'rgba(8, 4, 12, 0.85)';
+    // BILLOWING CAPE behind the body - tall flowing dark fabric
+    ctx.fillStyle = 'rgba(8, 4, 12, 0.92)';
     ctx.beginPath();
-    ctx.moveTo(bx - 110 - sway, by);
-    ctx.lineTo(bx - 70, by - boss.fighter.h * 0.6);
-    ctx.lineTo(bx - 60, by - boss.fighter.h - 30);
-    ctx.lineTo(bx + 60, by - boss.fighter.h - 30);
-    ctx.lineTo(bx + 70, by - boss.fighter.h * 0.6);
-    ctx.lineTo(bx + 110 + sway, by);
+    ctx.moveTo(bx - 90, by - h * 0.85);
+    ctx.bezierCurveTo(
+        bx - 130 + sway, by - h * 0.5,
+        bx - 130 - sway, by - h * 0.2,
+        bx - 110 + sway, by + 30
+    );
+    ctx.lineTo(bx + 110 + sway, by + 30);
+    ctx.bezierCurveTo(
+        bx + 130 + sway, by - h * 0.2,
+        bx + 130 + sway, by - h * 0.5,
+        bx + 90, by - h * 0.85
+    );
     ctx.closePath();
     ctx.fill();
-    // Cape inner shadow
-    ctx.fillStyle = 'rgba(60, 0, 20, 0.6)';
+    // Cape inner highlight (dark red lining catches some light)
+    ctx.fillStyle = 'rgba(80, 10, 20, 0.55)';
     ctx.beginPath();
-    ctx.moveTo(bx - 80, by - 10);
-    ctx.lineTo(bx - 55, by - boss.fighter.h * 0.5);
-    ctx.lineTo(bx + 55, by - boss.fighter.h * 0.5);
-    ctx.lineTo(bx + 80, by - 10);
+    ctx.moveTo(bx - 60, by - h * 0.6);
+    ctx.bezierCurveTo(bx - 100 + sway * 0.6, by - h * 0.3, bx - 80, by, bx - 60, by + 20);
+    ctx.lineTo(bx + 60, by + 20);
+    ctx.bezierCurveTo(bx + 80, by, bx + 100 + sway * 0.6, by - h * 0.3, bx + 60, by - h * 0.6);
     ctx.closePath();
     ctx.fill();
-    // Hood over the head
-    ctx.fillStyle = 'rgba(8, 4, 12, 0.95)';
+
+    // HOOD RIM - thin dark crescent behind/above head (doesn't cover face)
+    ctx.fillStyle = 'rgba(4, 2, 8, 0.9)';
     ctx.beginPath();
-    ctx.arc(bx, by - boss.fighter.h - 5, 60, Math.PI, 0, false);
-    ctx.lineTo(bx + 50, by - boss.fighter.h + 20);
-    ctx.lineTo(bx - 50, by - boss.fighter.h + 20);
+    ctx.arc(bx, by - h * 0.92, 72, Math.PI * 1.05, Math.PI * 1.95, false);
+    ctx.lineTo(bx + 70, by - h * 0.7);
+    ctx.bezierCurveTo(bx + 35, by - h * 0.78, bx - 35, by - h * 0.78, bx - 70, by - h * 0.7);
     ctx.closePath();
     ctx.fill();
-    // Glowing red eye slits inside the hood
-    const eyePulse = 0.6 + Math.sin(Date.now() / 200) * 0.4;
-    ctx.fillStyle = `rgba(255, 30, 30, ${eyePulse})`;
+    // Hood inner shadow under the rim - a darker arch just over the head
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+    ctx.beginPath();
+    ctx.arc(bx, by - h * 0.85, 56, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+}
+
+// Drawn AFTER the boss sprite - adds glowing red eye overlay on top of his existing eyes
+function drawBossCloakEyes() {
+    const bx = boss.fighter.x;
+    const by = boss.fighter.y;
+    const h = boss.fighter.h;
+    const eyePulse = 0.65 + Math.sin(Date.now() / 180) * 0.35;
+    ctx.save();
     ctx.shadowColor = '#ff2010';
-    ctx.shadowBlur = 14;
-    ctx.fillRect(bx - 18, by - boss.fighter.h - 8, 10, 4);
-    ctx.fillRect(bx + 8, by - boss.fighter.h - 8, 10, 4);
+    ctx.shadowBlur = 18;
+    ctx.fillStyle = `rgba(255, 40, 30, ${eyePulse})`;
+    // Position the glow over where Evil Bald's eyes typically are in the sprite
+    const eyeY = by - h * 0.78;
+    ctx.fillRect(bx - 22, eyeY, 14, 6);
+    ctx.fillRect(bx + 8, eyeY, 14, 6);
+    // Inner brightness
     ctx.shadowBlur = 0;
+    ctx.fillStyle = `rgba(255, 200, 200, ${eyePulse * 0.8})`;
+    ctx.fillRect(bx - 18, eyeY + 1, 6, 3);
+    ctx.fillRect(bx + 12, eyeY + 1, 6, 3);
     ctx.restore();
 }
 
